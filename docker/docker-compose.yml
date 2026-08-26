@@ -1,0 +1,42 @@
+# Phase 1 local stack: PostgreSQL only.
+#
+# The Spring Boot app still runs on your HOST (via ./mvnw spring-boot:run) in
+# this phase, so it connects to localhost:5432 - that is correct, because the
+# port is published from the container to the host.
+#
+# From Phase 7 the app itself moves into this compose file and will connect to
+# "postgres:5432" instead. See docs/architecture.md - "Container networking".
+
+name: tool-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tool-platform-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-toolplatform}
+      POSTGRES_USER: ${POSTGRES_USER:-toolplatform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
+    ports:
+      # host:container - only needed while the app runs outside Docker.
+      # 5433 on the host because this machine already runs another Postgres
+      # on 5432. INSIDE the compose network the port is always 5432.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Other services must wait for "ready to accept connections", not just
+      # for the container to exist. A started container is not a ready database.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-toolplatform} -d ${POSTGRES_DB:-toolplatform}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - platform-net
+
+volumes:
+  postgres-data:
+
+networks:
+  platform-net:
+    driver: bridge

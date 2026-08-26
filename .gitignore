@@ -1,0 +1,24 @@
+# Java / Maven
+backend/target/
+*.class
+
+# Python
+integration-tests/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+integration-tests/reports/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Local env / secrets  (NEVER commit real credentials)
+.env
+*.local.env
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
