@@ -85,7 +85,30 @@ created_at                     major/minor/patch_part  parsed, for numeric order
                                UNIQUE (tool_id, version)   <-- immutability
 ```
 
-Phase 2 adds `clients` and `client_tool_configuration` (the pinning table).
+```
+clients                        client_tool_configuration
+-------                        -------------------------
+id           PK                id                 PK
+name         UNIQUE  1 ---- *  client_id          FK -> clients.id       (CASCADE)
+description                    tool_id            FK -> tools.id         (CASCADE)
+created_at                     selector           PINNED | LATEST
+                               pinned_version_id  FK -> tool_versions.id (RESTRICT)
+                               updated_at
+                               UNIQUE (client_id, tool_id)
+                               CHECK  (PINNED => pinned_version_id IS NOT NULL)
+                               CHECK  (LATEST => pinned_version_id IS NULL)
+```
+
+Three things the database enforces here that application code would otherwise
+have to re-check on every write path:
+
+- **`pinned_version_id` is a foreign key, not a version string.** You cannot pin
+  a client to a version that does not exist.
+- **`ON DELETE RESTRICT`.** You cannot delete a version that a client still
+  depends on. (Contrast with `tool_versions.tool_id`, which cascades: deleting
+  a tool is meant to take its versions with it.)
+- **The selector CHECK constraints.** `PINNED` must name a version and `LATEST`
+  must not. The invariant cannot drift, even via a manual SQL update.
 
 ### Why store the version explicitly instead of always using "latest"?
 
@@ -103,9 +126,42 @@ Phase 2 adds `clients` and `client_tool_configuration` (the pinning table).
 5. **Blast radius** – With pinning, publishing a bad 2.0 affects nobody until
    a client explicitly opts in. With `latest`, it affects everyone at once.
 
-`latest` is not banned - it is *opt-in* (Phase 2), and even then it is
-resolved to a concrete version and logged, so you can always answer
-"which bytes actually ran?"
+`latest` is not banned - it is *opt-in*, and even then it is resolved to a
+concrete version and logged, so you can always answer "which bytes actually
+ran?"
+
+### Pinning, rollback, and blast radius
+
+A `ToolVersion` row is **immutable**. A `ClientToolConfiguration` row is
+**mutable by design**. That asymmetry is the whole mechanism:
+
+| Operation | What actually changes |
+|-----------|-----------------------|
+| Release 3.0 | One INSERT into `tool_versions`. No consumer moves. |
+| Adopt 3.0 | One UPDATE of that client's `pinned_version_id`. |
+| **Roll back** | One UPDATE, pointing back at 1.2. No rebuild, no redeploy of the tool, no artifact touched. |
+
+Rollback is cheap *because* artifacts are immutable: 1.2 is still byte-identical
+to the 1.2 that was tested, so pointing back at it is a known-good state rather
+than a hope. In a mutable-artifact world, "roll back to 1.2" means "rebuild
+something and call it 1.2", which is not a rollback at all.
+
+Blast radius follows from the same asymmetry. Publishing a broken 3.0 affects
+exactly the clients that opted in - which is normally none, until someone
+deliberately moves.
+
+### The status lifecycle in resolution
+
+| Status | Resolution result |
+|--------|-------------------|
+| `PUBLISHED` | 200 |
+| `DEPRECATED` | 200 + `Deprecation: true` header + `deprecated: true` in the body |
+| `REVOKED` | **410 Gone** |
+| `DRAFT` | resolvable only by explicit pin (a promotion gate arrives in Phase 3) |
+
+410 rather than 404 for a revoked version is deliberate: 404 tells a caller
+"you made a typo", 410 tells them "this existed and was withdrawn - you must
+move". Different diagnosis, different fix.
 
 ### Why parse the version into major/minor/patch columns?
 

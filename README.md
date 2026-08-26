@@ -25,12 +25,12 @@ and deploy internal tools.
 
 ## Status
 
-Phase 1 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
+Phases 1-2 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
 | 1 | Tool Registry Service (Spring Boot + PostgreSQL) | **done** |
-| 2 | Clients & version pinning | pending |
+| 2 | Clients & version pinning | **done** |
 | 3 | Artifactory integration & artifact download | pending |
 | 4 | Python data-driven pytest framework | pending |
 | 5 | Baseline CI pipeline + measurement | pending |
@@ -74,6 +74,9 @@ cd backend && ./mvnw spring-boot:run
 ```bash
 # 4. in a second terminal - seed demo data and smoke-test
 ./scripts/seed-demo-data.sh
+
+# 5. the Phase 2 scenario: three clients, three versions, then a rollback
+./scripts/demo-pinning.sh
 ```
 
 ## Tests
@@ -81,8 +84,8 @@ cd backend && ./mvnw spring-boot:run
 ```bash
 cd backend
 
-./mvnw test      # FAST lane: 28 unit + slice tests, no Docker, ~5 s
-./mvnw verify    # + SLOW lane: 6 Testcontainers tests on real PostgreSQL
+./mvnw test      # FAST lane: 44 unit + slice tests, no Docker, ~4 s
+./mvnw verify    # + SLOW lane: 16 Testcontainers tests on real PostgreSQL
 ```
 
 The split is deliberate: `@Tag("integration")` tests are excluded by surefire
@@ -100,6 +103,29 @@ Phase 6.
 | `GET`  | `/api/v1/tools/{tool}/versions` | List versions, newest first | 200, 404 |
 | `GET`  | `/api/v1/tools/{tool}/versions/{version}` | **Exact** version lookup | 200, 400, 404 |
 | `GET`  | `/actuator/health` | Health / liveness / readiness | 200 |
+
+### Clients & pinning (Phase 2)
+
+| Method | Path | Purpose | Codes |
+|--------|------|---------|-------|
+| `POST` | `/api/v1/clients` | Register a client | 201, 409, 422 |
+| `GET`  | `/api/v1/clients` | List clients (paginated) | 200 |
+| `GET`  | `/api/v1/clients/{client}` | Get one client | 200, 404 |
+| `GET`  | `/api/v1/clients/{client}/tools` | Everything this client consumes | 200, 404 |
+| `PUT`  | `/api/v1/clients/{client}/tools/{tool}/version` | Pin to a version, or `"latest"` | 200, 404, 422 |
+| `GET`  | `/api/v1/clients/{client}/tools/{tool}/version` | **Resolve**: which version, and why | 200, 404, **410** |
+| `DELETE` | `/api/v1/clients/{client}/tools/{tool}/version` | Remove the configuration | 204, 404 |
+
+`PUT` rather than `POST`: a client has exactly one version decision per tool,
+it lives at a known URL, and the operation must be idempotent so a retried
+deployment cannot create duplicates.
+
+**Rolling back is one call** — no rebuild, no artifact change:
+
+```bash
+curl -X PUT localhost:8081/api/v1/clients/client-c/tools/data-validator/version \
+     -H 'Content-Type: application/json' -d '{"version":"1.2"}'
+```
 
 Errors are RFC 7807 `application/problem+json`:
 

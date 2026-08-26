@@ -6,7 +6,7 @@ starts until the previous phase has been demonstrated working.
 | Phase | Deliverable | Concept it teaches | Status |
 |-------|-------------|--------------------|--------|
 | **1** | Tool Registry Service: Spring Boot + PostgreSQL, tools & versions, exact-version resolution, RFC 7807 errors, Flyway, health endpoint, unit + slice + Testcontainers tests | REST design, layering, immutability at the DB level, semantic versioning, fast/slow test split | **DONE** |
-| **2** | Clients & version pinning: `clients`, `client_tool_configuration`, `GET/POST /clients/{id}/tools/{tool}/version`, opt-in `latest` | Version pinning, per-client configuration, rollback as a config change | pending |
+| **2** | Clients & version pinning: `clients`, `client_tool_configuration`, `PUT/GET/DELETE /clients/{client}/tools/{tool}/version`, opt-in `latest`, 410 for revoked | Version pinning, per-client configuration, rollback as a config change, referential integrity | **DONE** |
 | **3** | Artifactory integration: Artifactory in Docker, upload on publish, `GET .../artifact` streaming download, SHA-256 verification, promotion (`DRAFT → PUBLISHED → DEPRECATED → REVOKED`) | Artifact repositories, coordinates, checksums, immutability, promotion | pending |
 | **4** | Python pytest data-driven integration framework: JSON/YAML test data, fixtures, parameterisation, negative + edge cases, HTML report | Data-driven testing, black-box API testing, test data as configuration | pending |
 | **5** | **Baseline** GitHub Actions pipeline, deliberately unoptimised. Measure wall-clock. | CI stages, fail-fast, what "slow" actually looks like | pending |

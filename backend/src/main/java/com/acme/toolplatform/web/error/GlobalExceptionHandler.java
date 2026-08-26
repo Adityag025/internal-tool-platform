@@ -3,6 +3,7 @@ package com.acme.toolplatform.web.error;
 import com.acme.toolplatform.service.exception.DuplicateResourceException;
 import com.acme.toolplatform.service.exception.InvalidVersionException;
 import com.acme.toolplatform.service.exception.ResourceNotFoundException;
+import com.acme.toolplatform.service.exception.VersionRevokedException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.time.Instant;
@@ -43,6 +44,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidVersionException.class)
     public ProblemDetail handleInvalidVersion(InvalidVersionException e, HttpServletRequest req) {
         return problem(HttpStatus.BAD_REQUEST, "Invalid Version", "invalid-version", e.getMessage(), req);
+    }
+
+    /**
+     * 410 Gone, not 404.
+     *
+     * The distinction is meaningful to the caller: 404 says "never existed,
+     * check your spelling", 410 says "existed and was withdrawn, you must
+     * move". Different problems, different fixes.
+     */
+    @ExceptionHandler(VersionRevokedException.class)
+    public ProblemDetail handleRevoked(VersionRevokedException e, HttpServletRequest req) {
+        return problem(HttpStatus.GONE, "Version Revoked", "version-revoked", e.getMessage(), req);
     }
 
     /** Bean-validation failures on @RequestBody -> 422 with per-field detail. */
