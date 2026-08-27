@@ -1,0 +1,70 @@
+# The promotion state machine, as data.
+#
+# from -> to, and whether the platform allows it. Encoding a state machine as
+# a table is exactly the kind of thing that becomes unreadable as duplicated
+# test methods and stays obvious as data.
+
+transitions:
+  - id: draft-to-published-allowed
+    from: DRAFT
+    to: PUBLISHED
+    with_artifact: true
+    expected_status: 200
+
+  - id: draft-to-published-without-artifact-blocked
+    from: DRAFT
+    to: PUBLISHED
+    with_artifact: false
+    expected_status: 409
+    expected_type: illegal-promotion
+    notes: The release gate. PUBLISHED must never mean "nothing to download".
+
+  - id: draft-to-deprecated-skips-lifecycle
+    from: DRAFT
+    to: DEPRECATED
+    with_artifact: true
+    expected_status: 409
+    expected_type: illegal-promotion
+
+  - id: published-to-deprecated-allowed
+    from: PUBLISHED
+    to: DEPRECATED
+    with_artifact: true
+    expected_status: 200
+
+  - id: published-to-revoked-allowed
+    from: PUBLISHED
+    to: REVOKED
+    with_artifact: true
+    expected_status: 200
+
+  - id: draft-to-revoked-allowed
+    from: DRAFT
+    to: REVOKED
+    with_artifact: true
+    expected_status: 200
+    notes: A bad build can be withdrawn before it is ever released.
+
+  - id: revoked-to-published-is-terminal
+    from: REVOKED
+    to: PUBLISHED
+    with_artifact: true
+    expected_status: 409
+    expected_type: illegal-promotion
+    notes: >
+      REVOKED is terminal. Un-revoking would let a consumer who correctly
+      stopped using an artifact be silently handed it again.
+
+  - id: revoked-to-deprecated-is-terminal
+    from: REVOKED
+    to: DEPRECATED
+    with_artifact: true
+    expected_status: 409
+    expected_type: illegal-promotion
+
+  - id: published-to-published-is-idempotent
+    from: PUBLISHED
+    to: PUBLISHED
+    with_artifact: true
+    expected_status: 200
+    notes: Re-running a pipeline step must not be an error.

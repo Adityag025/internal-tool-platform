@@ -1,0 +1,107 @@
+# Edge cases and abuse. Every entry here is a bug someone would otherwise
+# find in production.
+
+# --- input the service must refuse before it reaches the database ----------
+invalid_tool_names:
+  - id: path-traversal-in-tool-name
+    name: "../../etc/passwd"
+    expected_status: 422
+    expected_type: validation-error
+    notes: The tool name becomes part of a repository path. Traversal must die at the edge.
+
+  - id: uppercase-tool-name-rejected
+    name: "Data-Validator"
+    expected_status: 422
+    expected_type: validation-error
+    notes: One canonical spelling, or you end up with two tools that look identical.
+
+  - id: empty-tool-name-rejected
+    name: ""
+    expected_status: 422
+    expected_type: validation-error
+
+  - id: whitespace-tool-name-rejected
+    name: "data validator"
+    expected_status: 422
+    expected_type: validation-error
+
+  - id: leading-hyphen-rejected
+    name: "-data-validator"
+    expected_status: 422
+    expected_type: validation-error
+
+# --- malformed publish payloads --------------------------------------------
+invalid_version_payloads:
+  - id: version-missing
+    body: {"artifactPath": "data-validator/1.0/data-validator-1.0.jar"}
+    expected_status: 422
+    expected_type: validation-error
+    expected_field: version
+
+  - id: artifact-path-missing
+    body: {"version": "5.0"}
+    expected_status: 422
+    expected_type: validation-error
+    expected_field: artifactPath
+
+  - id: artifact-path-traversal
+    body: {"version": "5.0", "artifactPath": "../../../etc/passwd"}
+    expected_status: 422
+    expected_type: validation-error
+    expected_field: artifactPath
+
+  - id: artifact-path-absolute
+    body: {"version": "5.0", "artifactPath": "/etc/passwd"}
+    expected_status: 422
+    expected_type: validation-error
+    expected_field: artifactPath
+
+  - id: corrupted-checksum-too-short
+    body:
+      version: "5.0"
+      artifactPath: "data-validator/5.0/data-validator-5.0.jar"
+      checksumSha256: "abc123"
+    expected_status: 422
+    expected_type: validation-error
+    expected_field: checksumSha256
+    notes: Corrupted artifact metadata. A 6-char string is not a SHA-256.
+
+  - id: corrupted-checksum-not-hex
+    body:
+      version: "5.0"
+      artifactPath: "data-validator/5.0/data-validator-5.0.jar"
+      checksumSha256: "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+    expected_status: 422
+    expected_type: validation-error
+    expected_field: checksumSha256
+
+  - id: version-with-too-many-parts
+    body: {"version": "1.2.3.4", "artifactPath": "data-validator/1.2.3.4/x.jar"}
+    expected_status: 422
+    expected_type: validation-error
+    expected_field: version
+
+# --- client configuration input --------------------------------------------
+invalid_client_versions:
+  - id: nonexistent-version-cannot-be-pinned
+    version: "999.0"
+    expected_status: 404
+    expected_type: not-found
+    notes: Fails at CONFIGURATION time, not later during someone's deploy.
+
+  - id: garbage-version-string-rejected
+    version: "newest-please"
+    expected_status: 422
+    expected_type: validation-error
+
+  - id: empty-version-rejected
+    version: ""
+    expected_status: 422
+    expected_type: validation-error
+
+  - id: latest-keyword-accepted-here
+    version: "latest"
+    expected_status: 200
+    notes: >
+      The one place 'latest' is legal - an explicit, recorded decision by a
+      named client. Contrast with the registry lookup, where it is a 400.

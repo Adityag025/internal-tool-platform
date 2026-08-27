@@ -1,0 +1,111 @@
+[
+  {
+    "id": "existing-1.0-returns-200",
+    "tool": "data-validator",
+    "version": "1.0",
+    "expected_status": 200,
+    "notes": "The version Client A is frozen on for an audit."
+  },
+  {
+    "id": "existing-1.1-returns-200",
+    "tool": "data-validator",
+    "version": "1.1",
+    "expected_status": 200
+  },
+  {
+    "id": "existing-1.2-returns-200",
+    "tool": "data-validator",
+    "version": "1.2",
+    "expected_status": 200
+  },
+  {
+    "id": "existing-2.0-returns-200",
+    "tool": "data-validator",
+    "version": "2.0",
+    "expected_status": 200
+  },
+  {
+    "id": "deprecated-0.9-still-resolves",
+    "tool": "data-validator",
+    "version": "0.9",
+    "expected_status": 200,
+    "expected_version_status": "DEPRECATED",
+    "notes": "Deprecation is a migration signal, not a failure. It must not break consumers."
+  },
+  {
+    "id": "revoked-9.9-still-visible-in-registry",
+    "tool": "data-validator",
+    "version": "9.9",
+    "expected_status": 200,
+    "expected_version_status": "REVOKED",
+    "notes": "Metadata stays queryable so you can SEE it was revoked. The ARTIFACT is what becomes 410."
+  },
+  {
+    "id": "missing-999.0-returns-404",
+    "tool": "data-validator",
+    "version": "999.0",
+    "expected_status": 404,
+    "expected_type": "not-found",
+    "notes": "Must NOT silently fall back to the newest version."
+  },
+  {
+    "id": "missing-1.9-returns-404-not-1.10",
+    "tool": "data-validator",
+    "version": "1.9",
+    "expected_status": 404,
+    "expected_type": "not-found",
+    "notes": "1.9 does not exist. A string-based near match must not resolve it."
+  },
+  {
+    "id": "typo-1.20-does-not-resolve-to-1.2",
+    "tool": "data-validator",
+    "version": "1.20",
+    "expected_status": 404,
+    "expected_type": "not-found",
+    "notes": "The worst possible failure would be serving 1.2 for a 1.20 typo."
+  },
+  {
+    "id": "unknown-tool-returns-404",
+    "tool": "ghost-tool",
+    "version": "1.0",
+    "expected_status": 404,
+    "expected_type": "not-found"
+  },
+  {
+    "id": "keyword-latest-is-rejected-400",
+    "tool": "data-validator",
+    "version": "latest",
+    "expected_status": 400,
+    "expected_type": "invalid-version",
+    "notes": "'latest' is only meaningful in a client configuration, never as a lookup key."
+  },
+  {
+    "id": "malformed-1.x-is-400",
+    "tool": "data-validator",
+    "version": "1.x",
+    "expected_status": 400,
+    "expected_type": "invalid-version"
+  },
+  {
+    "id": "malformed-v-prefix-is-400",
+    "tool": "data-validator",
+    "version": "v1.2",
+    "expected_status": 400,
+    "expected_type": "invalid-version"
+  },
+  {
+    "id": "malformed-single-number-is-400",
+    "tool": "data-validator",
+    "version": "1",
+    "expected_status": 400,
+    "expected_type": "invalid-version"
+  },
+  {
+    "id": "malformed-snapshot-is-400",
+    "tool": "data-validator",
+    "version": "1.0-SNAPSHOT",
+    "expected_status": 400,
+    "expected_type": "invalid-version",
+    "notes": "This platform distributes releases only. Mutable SNAPSHOTs are out of scope by design."
+  }
+]

@@ -1,0 +1,75 @@
+# Which version does each client actually receive?
+#
+# This file IS the business requirement, written so that it executes.
+# A product owner can read it; CI can run it.
+
+resolution:
+  - id: client-a-is-frozen-on-1.0
+    client: client-a
+    tool: data-validator
+    expected_status: 200
+    expected_version: "1.0"
+    expected_selector: PINNED
+    notes: Audit-frozen. Nobody else's release may move this.
+
+  - id: client-b-mid-migration-on-1.1
+    client: client-b
+    tool: data-validator
+    expected_status: 200
+    expected_version: "1.1"
+    expected_selector: PINNED
+
+  - id: client-c-on-newest-schema-2.0
+    client: client-c
+    tool: data-validator
+    expected_status: 200
+    expected_version: "2.0"
+    expected_selector: PINNED
+
+  - id: client-latest-floats-to-newest-published
+    client: client-latest
+    tool: data-validator
+    expected_status: 200
+    expected_version: "<newest-published>"
+    expected_selector: LATEST
+    notes: >
+      Resolved at run time, not hard-coded. Other tests in this suite publish
+      new versions, and a floating client is SUPPOSED to move when they do -
+      so a literal here would be flaky by construction. The invariant being
+      tested is "latest == the newest PUBLISHED version", which also means it
+      must skip DRAFT, DEPRECATED and REVOKED: floating must never float you
+      onto something unreleased or withdrawn.
+
+  - id: client-on-deprecated-version-still-works
+    client: client-deprecated
+    tool: data-validator
+    expected_status: 200
+    expected_version: "0.9"
+    expected_selector: PINNED
+    expected_deprecated: true
+
+  - id: client-pinned-to-revoked-version-is-410
+    client: client-revoked
+    tool: data-validator
+    expected_status: 410
+    expected_type: version-revoked
+    notes: 410 Gone, not 404 - it existed and was withdrawn.
+
+  - id: unconfigured-client-is-404
+    client: client-unconfigured
+    tool: data-validator
+    expected_status: 404
+    expected_type: not-found
+    notes: No default to 'latest'. An unconfigured consumer is a mistake to surface.
+
+  - id: unknown-client-is-404
+    client: no-such-client
+    tool: data-validator
+    expected_status: 404
+    expected_type: not-found
+
+  - id: known-client-unknown-tool-is-404
+    client: client-a
+    tool: ghost-tool
+    expected_status: 404
+    expected_type: not-found

@@ -2,9 +2,15 @@
 backend/target/
 *.class
 
-# Locally stored artifacts (bytes never belong in git)
-backend/data/
-data/
+# Locally stored artifacts (bytes never belong in git).
+#
+# These paths are ANCHORED on purpose. A bare `data/` matches every directory
+# called data at any depth - which silently excluded integration-tests/data/,
+# the entire data-driven test suite's case files. Everything passed locally
+# and the very first CI run failed on files that were never committed.
+# An unanchored gitignore pattern is a works-on-my-machine generator.
+/backend/data/
+/data/
 
 # Python
 integration-tests/.venv/
