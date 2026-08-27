@@ -187,6 +187,9 @@ jobs:
             -f docker/Dockerfile.baseline \
             -t tool-registry:${{ steps.version.outputs.value }} \
             backend
+          # Report the size so the naive-vs-multi-stage comparison is measured
+          # rather than asserted. Costs ~0.1s and does not affect the timing.
+          docker images tool-registry --format 'NAIVE IMAGE SIZE: {{.Size}}'
 
       # --- 15. Publish the build artifact ----------------------------------
       - name: Upload jar
