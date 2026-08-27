@@ -137,6 +137,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Every job starts on a CLEAN runner and shares no state with the others.
+      # Splitting one job into five means each one must declare the toolchain
+      # it needs - this job runs the jar, so it needs the matching JDK. The
+      # first run of this pipeline failed here with UnsupportedClassVersionError
+      # (class file 65 on a Java 17 runtime), because the single-job baseline
+      # had inherited the JDK from an earlier step and the split job did not.
+      # Parallelism is not free: shared setup has to be repeated.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
       - uses: actions/download-artifact@v4
         with:
           name: application-jar
