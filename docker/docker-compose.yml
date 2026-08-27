@@ -56,11 +56,18 @@ services:
       # volume it has none and refuses to boot, so we supply one explicitly.
       # It lives in .env (gitignored) - losing it makes stored secrets
       # unreadable, which is exactly why it is a secret and not a default.
-      JF_SHARED_SECURITY_MASTERKEY: ${ARTIFACTORY_MASTER_KEY:?set ARTIFACTORY_MASTER_KEY in .env}
+      # Empty default, NOT the ${VAR:?error} form.
+      #
+      # Compose interpolates the ENTIRE file before it applies profiles, so a
+      # required-variable marker here fails `docker compose up postgres` too -
+      # even though this service is not being started. That broke CI before CI
+      # existed. Artifactory reports its own clear error if the key is absent
+      # (see docs/artifactory.md section 10); set both keys in .env.
+      JF_SHARED_SECURITY_MASTERKEY: ${ARTIFACTORY_MASTER_KEY:-}
       # The microservices inside the container authenticate to each other with
       # the join key. Both keys are required on a fresh volume; supplying only
       # one gets you a FATAL a few minutes into boot.
-      JF_SHARED_SECURITY_JOINKEY: ${ARTIFACTORY_JOIN_KEY:?set ARTIFACTORY_JOIN_KEY in .env}
+      JF_SHARED_SECURITY_JOINKEY: ${ARTIFACTORY_JOIN_KEY:-}
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8082/router/api/v1/system/health || exit 1"]
       interval: 10s

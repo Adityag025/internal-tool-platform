@@ -1,0 +1,216 @@
+# =============================================================================
+# BASELINE PIPELINE - deliberately unoptimised.
+#
+# This is the "before" measurement. It is not a strawman: every inefficiency
+# in it is one people actually ship, usually because the pipeline grew a step
+# at a time and nobody ever went back to look at it as a whole.
+#
+# The seven deliberate problems, each fixed and measured in ci-optimised.yml:
+#
+#   1. No Maven dependency cache      - re-downloads the whole tree every run
+#   2. `clean` three separate times   - three full compiles, unit tests twice
+#   3. Fixed `sleep` for readiness    - waits a constant, not for the event
+#   4. No pip cache                   - re-resolves Python deps every run
+#   5. Docker build recompiles        - a fourth build, inside the image
+#   6. One single job                 - nothing runs in parallel
+#   7. No fail-fast tiering           - a lint-level mistake is found last
+#
+# Do not "fix" this file. Its whole job is to be the number we improve on.
+# =============================================================================
+
+name: CI (baseline)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+# Both pipelines run on the same commit so the comparison is fair.
+concurrency:
+  group: baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  everything:
+    name: Build, test, package, publish (one job, sequential)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # --- 1. Checkout -----------------------------------------------------
+      # Fetches the repository at the commit that triggered the run. Every
+      # pipeline starts here; the runner begins completely empty.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # --- 2. Set up Java --------------------------------------------------
+      # Installs a JDK on the runner. Note what is MISSING: `cache: maven`.
+      # Without it, step 3 downloads every dependency from Maven Central again
+      # on every single run - the single largest waste in this pipeline.
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # --- 3. Unit tests ---------------------------------------------------
+      # `clean` deletes target/ first, so this compiles everything from
+      # scratch. It also downloads the entire dependency tree (see step 2).
+      - name: Unit and slice tests
+        working-directory: backend
+        run: ./mvnw -B clean test
+
+      # --- 4. Integration tests --------------------------------------------
+      # `clean verify` throws away the compile we just did, recompiles, and
+      # re-runs all the unit tests before reaching the integration ones.
+      # Testcontainers starts a real PostgreSQL inside the runner's Docker.
+      - name: Integration tests (Testcontainers)
+        working-directory: backend
+        run: ./mvnw -B clean verify
+
+      # --- 5. Package ------------------------------------------------------
+      # A third `clean`, a third compile, to produce the jar we could have
+      # kept from step 4.
+      - name: Package the application
+        working-directory: backend
+        run: ./mvnw -B clean package -DskipTests
+
+      # --- 6. Derive the release version -----------------------------------
+      # CI owns version numbers, not humans. github.run_number is monotonic
+      # and unique, so every green build produces coordinates that can never
+      # collide with a previous one - which is what makes them immutable.
+      - name: Derive version
+        id: version
+        run: echo "value=0.1.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      # --- 7. Start dependencies -------------------------------------------
+      # The black-box suite needs a real running platform, which needs a real
+      # database.
+      - name: Start PostgreSQL
+        run: docker compose -f docker/docker-compose.yml up -d postgres
+
+      # --- 8. Wait (badly) --------------------------------------------------
+      # A fixed sleep. It is either too short (flaky) or too long (wasteful),
+      # and it is usually both on different days. PostgreSQL is typically
+      # ready in ~3 seconds; this burns 45 regardless.
+      - name: Wait for PostgreSQL
+        run: sleep 45
+
+      # --- 9. Start the application ----------------------------------------
+      # Same problem again: a constant sleep instead of polling the health
+      # endpoint that exists precisely to answer "are you ready?".
+      - name: Start the Tool Registry
+        run: |
+          nohup java -jar backend/target/tool-registry.jar > app.log 2>&1 &
+          sleep 40
+          curl -sf http://localhost:8081/actuator/health || { cat app.log; exit 1; }
+
+      # --- 10. Set up Python -----------------------------------------------
+      # Again no `cache: pip`, so the next step resolves and downloads from
+      # PyPI on every run.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: python -m pip install -r integration-tests/requirements.txt
+
+      # --- 11. Black-box integration tests ---------------------------------
+      # The data-driven suite from Phase 4, against a real running platform.
+      - name: Data-driven integration tests
+        working-directory: integration-tests
+        env:
+          BASE_URL: http://localhost:8081
+        run: python -m pytest --junitxml=reports/junit.xml
+
+      # --- 12. Dogfooding: publish through the platform itself -------------
+      # The pipeline registers its own build in the registry it just built,
+      # uploads the jar, and promotes it. DRAFT -> upload -> PUBLISHED is the
+      # release gate: a version can never be PUBLISHED with nothing behind it.
+      - name: Register and publish this build in the Tool Registry
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          BASE=http://localhost:8081
+          TOOL=tool-registry
+
+          curl -sf -X POST "$BASE/api/v1/tools" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"$TOOL\",\"description\":\"The registry service itself\"}" \
+            -o /dev/null -w 'register tool  : %{http_code}\n' || true
+
+          curl -sf -X POST "$BASE/api/v1/tools/$TOOL/versions" -H 'Content-Type: application/json' \
+            -d "{\"version\":\"$VERSION\",\"artifactPath\":\"$TOOL/$VERSION/$TOOL-$VERSION.jar\",\"status\":\"DRAFT\"}" \
+            -o /dev/null -w 'register version: %{http_code}\n'
+
+          curl -sf -X PUT "$BASE/api/v1/tools/$TOOL/versions/$VERSION/artifact" \
+            -H 'Content-Type: application/octet-stream' \
+            --data-binary @backend/target/tool-registry.jar \
+            -o /dev/null -w 'upload artifact : %{http_code}\n'
+
+          curl -sf -X POST "$BASE/api/v1/tools/$TOOL/versions/$VERSION/promotion" \
+            -H 'Content-Type: application/json' -d '{"status":"PUBLISHED"}' \
+            -o /dev/null -w 'promote         : %{http_code}\n'
+
+      # --- 13. Publish to Artifactory (only when configured) ---------------
+      # Credentials come from GitHub Actions Secrets and are injected ONLY
+      # into this step's environment - never written to a file, never echoed,
+      # never present in any other step.
+      - name: Publish to Artifactory
+        env:
+          ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD }}
+          ARTIFACTORY_REPO: ${{ vars.ARTIFACTORY_REPO || 'internal-tools-local' }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ARTIFACTORY_URL:-}" ]; then
+            echo "::notice::ARTIFACTORY_URL secret is not set - skipping the Artifactory publish."
+            exit 0
+          fi
+          JAR=backend/target/tool-registry.jar
+          SHA=$(sha256sum "$JAR" | cut -d' ' -f1)
+          curl -sSf -u "$ARTIFACTORY_USERNAME:$ARTIFACTORY_PASSWORD" \
+               -H "X-Checksum-Sha256: $SHA" \
+               -T "$JAR" \
+               "$ARTIFACTORY_URL/artifactory/$ARTIFACTORY_REPO/tool-registry/$VERSION/tool-registry-$VERSION.jar"
+
+      # --- 14. Build the Docker image --------------------------------------
+      # The naive Dockerfile compiles the application AGAIN, inside the image,
+      # re-downloading every Maven dependency for a fourth time. Nothing is
+      # cached between runs.
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f docker/Dockerfile.baseline \
+            -t tool-registry:${{ steps.version.outputs.value }} \
+            backend
+
+      # --- 15. Publish the build artifact ----------------------------------
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: tool-registry-${{ steps.version.outputs.value }}
+          path: backend/target/tool-registry.jar
+          retention-days: 7
+
+      # --- 16. Test reports -------------------------------------------------
+      # `if: always()` so reports are published even when tests failed -
+      # which is exactly when you need them most.
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-baseline-${{ github.run_number }}
+          path: |
+            backend/target/surefire-reports/
+            backend/target/failsafe-reports/
+            integration-tests/reports/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Application log on failure
+        if: failure()
+        run: cat app.log || true

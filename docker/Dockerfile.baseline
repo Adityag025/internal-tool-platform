@@ -1,0 +1,27 @@
+# BASELINE Dockerfile - deliberately naive.
+#
+# This is what a first attempt honestly looks like, and every problem with it
+# is a real one that Phase 6 will fix and measure:
+#
+#   1. Single stage. The final image ships a full JDK, Maven, the entire
+#      source tree and ~/.m2 - hundreds of megabytes nobody needs at runtime.
+#   2. `COPY . .` before the build means ANY file change - a README typo -
+#      invalidates every layer after it, so the dependency download runs again.
+#   3. Dependencies are resolved inside the build with no separate layer, so
+#      Docker can never cache them independently of the source.
+#   4. Runs as root.
+#
+# See Dockerfile (Phase 7) for the multi-stage, layer-cached version.
+
+FROM eclipse-temurin:21-jdk
+
+WORKDIR /build
+
+# Everything at once - the cache-busting mistake.
+COPY . .
+
+# Full dependency resolution + compile + package, every single build.
+RUN ./mvnw -B clean package -DskipTests
+
+EXPOSE 8081
+ENTRYPOINT ["java", "-jar", "/build/target/tool-registry.jar"]
