@@ -288,3 +288,155 @@ gh run view <id> --log-failed                 # only the failing step's log
 ```
 
 Both pipelines also run automatically on every push to `main`.
+
+---
+
+# 8. Optimisation: measured
+
+`.github/workflows/ci-optimised.yml` does the same work as the baseline. Both
+trigger on every push to `main`, so they run on the **same commit, same runner
+class**, and the comparison is fair by construction.
+
+## 8.1 The numbers
+
+| Pipeline | Runs | Wall clock | Runner-seconds |
+|----------|------|-----------:|---------------:|
+| Baseline | 201 s, 250 s, 197 s, 199 s | **mean 212 s** | 212 s |
+| Optimised, **warm cache** | 109 s, 108 s | **mean 108 s** | 142 s |
+| Optimised, **cold cache** | 208 s | 208 s | 268 s |
+
+```
+improvement = ((X - Y) / X) x 100
+            = ((212 - 108) / 212) x 100
+            = 49.1%
+```
+
+**Steady-state wall clock: 212 s → 108 s, a 49% reduction.**
+
+## 8.2 The result that matters more than the headline
+
+**On a genuinely cold cache the optimised pipeline is 208 s — no faster than
+the baseline's 212 s.**
+
+The entire improvement is a caching effect. That is not a disappointment, it
+is the finding, and quoting 49% without it would be dishonest:
+
+- **49% is the steady state**, and the steady state is what developers
+  actually experience — every run after the first, on every branch, all day.
+- **208 s is the first run**, or any run after a cache eviction. GitHub evicts
+  caches unused for 7 days and enforces a 10 GB per-repository limit, so cold
+  starts are a real, recurring event, not a one-time cost.
+- Cold, the optimised pipeline does *more* work than the baseline: 268
+  runner-seconds against 212. `dependency:go-offline` in the Docker
+  dependency layer resolves more than the build strictly needs, so the layer
+  is expensive to populate and cheap to reuse. The Docker job goes from 19 s
+  warm to **115 s cold** and lands squarely on the critical path.
+
+If someone asks "how much faster did you make the pipeline?", the honest
+answer is *"49% in steady state, nothing at all on a cold cache, and here is
+why"* — not a single number.
+
+## 8.3 Attribution: which change produced which saving
+
+Wall-clock attribution in a parallel graph is ambiguous — removing work from a
+job that is *not* on the critical path saves no wall clock at all. So the
+decomposition uses two different measures, each for what it can actually
+answer:
+
+**Step 1 — work eliminated** (runner-seconds; additive and unambiguous)
+
+```
+212 runner-seconds  ->  142 runner-seconds     = 70 s of work removed (33%)
+```
+
+| Change | Evidence | Work removed |
+|--------|----------|-------------:|
+| Fixed sleeps → `compose --wait` + readiness polling | 85 s of `sleep` in the baseline; the whole blackbox job is now 43 s | **~73 s** |
+| Maven cache | baseline unit-test step 23–40 s → whole fast-tests job 21 s | ~15 s per invocation |
+| One build, not three `clean` builds | baseline steps 3+4+5 = 68 s → one 54 s job | ~14 s |
+| Docker layer cache | naive build 27–45 s → 19 s warm | ~15 s |
+| pip cache | 5–13 s → ~2 s | ~5 s |
+
+(These overlap — the caching wins partly *are* the reason the rebuilt steps
+are cheaper — which is exactly why the honest total is the measured 70 s, not
+the sum of the rows.)
+
+**Step 2 — wall-clock compression** (parallelism; moves work, removes none)
+
+```
+142 runner-seconds  ->  108 s wall clock       = a further 34 s saved
+```
+
+Five jobs on the graph below; the critical path is
+`build-and-integration (54 s) → blackbox (43 s) → publish (5 s)`, and the
+`image` job (19 s) is free because it runs alongside `blackbox`.
+
+```
+fast-tests (21s) ───────┐
+                        ├──> blackbox (43s) ──┐
+build-and-integration ──┤                     ├──> publish (5s)
+        (54s)           └──> image (19s) ─────┘
+```
+
+So: **caching and de-duplication removed 33% of the work; parallelism
+compressed what remained by a further 24%.** Neither alone gets to 49%.
+
+## 8.4 The seven fixes
+
+| # | Problem | Fix | Measured effect |
+|---|---------|-----|-----------------|
+| 1 | 85 s of fixed `sleep` | `scripts/wait-for-http.sh` polls `/actuator/health/readiness` | the largest single win |
+| 2 | No dependency caches | `cache: maven`, `cache: pip` | also **removed the 24% run-to-run variance** |
+| 3 | Four compiles | `mvn verify` once; jar handed downstream as an artifact | correctness as much as speed |
+| 4 | Docker recompiles the app | multi-stage, dependency layer before source copy, `type=gha` cache | 45 s → 19 s warm; **673 MB → 376 MB** |
+| 5 | One sequential job | five jobs on a dependency graph | 142 runner-seconds → 108 s wall |
+| 6 | No tiering | cheapest signal first, dependents cancelled on failure | fails faster on the unhappy path |
+| 7 | Integration job re-ran unit tests | `-DskipUnitTests=true` | ~20 s of duplicated work |
+
+### On fix 2 and variance
+
+The baseline's two runs differed by 49 s (24%), all of it in network-bound
+steps. The optimised warm runs differ by **1 s** (109 s, 108 s). Caching did
+not only make the pipeline faster — it made it *predictable*, which matters
+more than the mean when you are deciding whether to trust a red build.
+
+### On fix 4: the image
+
+| | Baseline | Optimised |
+|---|---------:|----------:|
+| Size | **673 MB** | **376 MB** |
+| Contents | JDK + full source tree + populated `~/.m2` | JRE + one jar |
+| Runs as | root | non-root uid 10001 |
+| Build, warm | 27–45 s (never cached) | 19 s |
+
+44% smaller, and every megabyte removed is also attack surface removed.
+
+## 8.5 What parallelism actually costs
+
+Splitting one job into five is not free, and the first run of the optimised
+pipeline proved it by failing:
+
+```
+UnsupportedClassVersionError: class file version 65.0,
+this version of the Java Runtime only recognizes class file versions up to 61.0
+```
+
+The `blackbox` job downloads the jar and runs it — but jobs start on **clean
+runners and share no state**, so it was running a Java 21 jar on the runner's
+default JDK 17. The single-job baseline had inherited the JDK from an earlier
+step; the split job had to declare its own.
+
+Three costs to weigh before splitting a job:
+
+1. **Setup is repeated.** Every job re-runs checkout, toolchain setup, and
+   cache restore. Five jobs, five checkouts.
+2. **Nothing is shared.** Files must travel as artifacts
+   (`upload-artifact`/`download-artifact`), which is itself time.
+3. **Runner-seconds go up even as wall clock goes down** — 142 against 212
+   here would have been worse still without the caching wins. If you are
+   billed per minute rather than optimising for developer wait time, that
+   trade may not be worth making.
+
+Parallelism buys wall clock by spending compute. That is usually the right
+trade for a QA cycle, where a human is waiting — and the wrong one for a
+nightly batch job, where nobody is.

@@ -856,3 +856,159 @@ The other was an unanchored gitignore pattern — `data/` matched at any depth,
 so the entire data-driven test suite's case files were never committed. The
 suite was green locally against files CI couldn't see. That's the real answer
 to what a pipeline is for: running your code somewhere that isn't your laptop."
+
+---
+
+## Phase 6 — Pipeline optimisation
+
+### (B) What you can truthfully say you built in this learning project
+
+- Two pipelines on the same commit and runner class — one deliberately
+  unoptimised, one optimised — so the comparison is measured, not asserted.
+- **212 s → 108 s steady state, a 49% wall-clock reduction**, computed as
+  `((X−Y)/X)×100` from four baseline runs and two optimised runs.
+- A decomposition that separates the two mechanisms: caching and
+  de-duplication removed **33% of the work** (212 → 142 runner-seconds);
+  parallelism compressed the remainder by a further **24%**.
+- A multi-stage Dockerfile that cut the image from **673 MB to 376 MB**,
+  runs as a non-root user, and uses an exec-form entrypoint so the JVM
+  receives SIGTERM.
+- The honest caveat, measured rather than assumed: **on a cold cache the
+  optimised pipeline is 208 s — no faster than the baseline.**
+
+### The thing that makes this answer credible
+
+Anyone can say "I optimised the pipeline by 50%". What separates a real answer
+is knowing where the number breaks down.
+
+> "49% is the steady state. I also measured it with the caches purged, and
+> cold it's 208 seconds against the baseline's 212 — no improvement at all.
+> The entire gain is a caching effect. That matters because GitHub evicts
+> caches after seven days unused and caps a repo at 10 GB, so cold starts are
+> a recurring event, not a one-off. Cold, the optimised pipeline actually does
+> *more* work — 268 runner-seconds against 212 — because `dependency:go-offline`
+> in the Docker layer resolves more than the build needs. It's cheap to reuse
+> and expensive to populate."
+
+### 5 beginner questions
+
+1. **What does caching do in a CI pipeline?**
+   Restores a directory from a previous run — `~/.m2`, the pip cache, Docker
+   layers — keyed on a hash of the files that determine its contents (the
+   pom, the requirements file). A key change means a cache miss and a cold
+   rebuild.
+
+2. **Why is a multi-stage Docker build smaller?**
+   Only the final stage ships. The JDK, the source tree and the populated
+   `~/.m2` stay in the build stages and are discarded. 673 MB → 376 MB here.
+
+3. **Why order the Dockerfile with dependencies before source?**
+   Docker caches a layer only if it and everything before it are unchanged.
+   Dependencies change monthly, source changes hourly. Copy the source first
+   and every one-character edit throws away the dependency download.
+
+4. **What is a fixed `sleep` in a pipeline and what is wrong with it?**
+   Waiting a constant instead of the actual event. Too short is flaky, too
+   long is wasted, and on a loaded runner it manages to be both on different
+   days. Poll the readiness endpoint that exists to answer the question.
+
+5. **Why did the black-box job need its own `setup-java`?**
+   Jobs run on separate clean runners and share no state. The single-job
+   baseline inherited the JDK from an earlier step; the split job did not, and
+   failed with `UnsupportedClassVersionError`.
+
+### 5 intermediate questions
+
+1. **You say 49% faster. Convince me.**
+   Four baseline runs (201, 250, 197, 199 → mean 212 s) and two optimised runs
+   (109, 108 → mean 108 s), same commit, same runner class, both triggered by
+   the same push. `((212−108)/212)×100 = 49.1%`. And it is 49% *in steady
+   state only* — cold, it is 208 s and there is no improvement, because the
+   whole gain is caching.
+
+2. **Which single change mattered most, and did it match your expectation?**
+   No. I expected caching. The measurement said 85 seconds — 38% of the run —
+   was fixed `sleep` waiting for a database ready in ~3 s and an app up in
+   ~8 s. Caching was second. That gap between intuition and measurement is the
+   reason to measure first.
+
+3. **How do you attribute a saving to a change when jobs run in parallel?**
+   You cannot, using wall clock alone — removing work from a job off the
+   critical path saves nothing. So use two measures: runner-seconds for *work
+   removed* (additive, unambiguous) and wall clock for *time saved*
+   (path-dependent). Here: 70 s of work removed, then 34 s more from
+   compression.
+
+4. **What does parallelism cost?**
+   Compute, and setup duplication. Runner-seconds went from 212 to 142 here,
+   but only because caching removed more than parallelism added — five jobs
+   means five checkouts, five toolchain setups, and files moving between them
+   as artifacts. Parallelism buys wall clock by spending compute. Right trade
+   for a QA cycle where a human is waiting; wrong one for a nightly batch job.
+
+5. **Why is compiling four times a correctness problem, not just a slow one?**
+   Four builds are four chances to produce different bytes — a different
+   transitive dependency resolved, a different base-image patch. Then the
+   artifact you tested is not provably the artifact you shipped, and every
+   test result recorded before the last build is worthless. "Build once,
+   deploy everywhere" is a correctness rule.
+
+### 3 debugging scenarios
+
+1. **"The pipeline got slower and nobody changed it."**
+   Something it depends on changed. Most often a cache key no longer matches —
+   a pom edit, a new lockfile, an evicted cache — so every run is a cold
+   start. Compare per-step timings against a known-good run, which requires
+   having kept the old numbers.
+
+2. **"It's fast on main and slow on every PR branch."**
+   Cache scoping. GitHub caches are readable from the base branch but writes
+   from a PR branch are isolated, so feature branches often run cold. Warm the
+   cache on the default branch and make sure the key is not accidentally
+   branch-specific.
+
+3. **"The optimised pipeline is flaky and the baseline was not."**
+   Suspect the parallelism first: two jobs racing for the same port, the same
+   database, or the same external resource. Then suspect readiness — a poll
+   with too short a timeout is just a fixed sleep wearing a disguise. Check
+   whether the failure is always the same job, and whether it fails when run
+   alone.
+
+### 30-second explanation
+
+"I built the pipeline twice — one deliberately unoptimised, one optimised —
+and ran both on every push so they measure the same commit. Steady state went
+from 212 seconds to 108, a 49% reduction. The interesting part is that with
+caches purged the optimised one is 208 seconds, no faster at all: the entire
+gain is a caching effect, and I'd rather say that than quote the flattering
+number on its own."
+
+### 2-minute explanation
+
+"The baseline was deliberately unoptimised so I'd have a real 'before' rather
+than a guess. I measured it four times — 201, 250, 197, 199 — and the variance
+was itself a finding: 24% spread on identical input, all of it in
+network-bound steps.
+
+The per-step breakdown said something I didn't expect. The biggest single cost
+wasn't dependency downloads, it was 85 seconds of fixed `sleep` — 38% of the
+run — waiting for a database that was ready in three seconds and an app that
+was up in eight. So the first fix was polling the readiness endpoint instead of
+guessing, and `docker compose up --wait`, which blocks on the healthcheck the
+compose file already declared.
+
+Then caching, one build instead of four with the jar handed downstream as an
+artifact, a multi-stage Dockerfile that took the image from 673 to 376
+megabytes, and splitting one sequential job into five on a dependency graph.
+
+Steady state came out at 108 seconds against 212 — 49%. I decomposed it two
+ways, because wall-clock attribution is meaningless in a parallel graph:
+caching and de-duplication removed 33% of the *work*, measured in
+runner-seconds, and parallelism compressed what remained by a further 24%.
+
+And the honest caveat: I purged the caches and measured cold. 208 seconds — no
+improvement. The whole gain is caching, cold runs happen whenever a cache is
+evicted, and cold the optimised pipeline actually does more work than the
+baseline because pre-resolving dependencies for the Docker layer is expensive
+to populate and cheap to reuse. That's the number I'd lead with if someone
+asked me to defend it."

@@ -25,7 +25,7 @@ and deploy internal tools.
 
 ## Status
 
-Phases 1-5 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
+Phases 1-6 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
@@ -34,7 +34,7 @@ Phases 1-5 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 | 3 | Artifact distribution, checksums & promotion | **done** |
 | 4 | Python data-driven pytest framework | **done** |
 | 5 | Baseline CI pipeline + measurement | **done** |
-| 6 | Optimised CI pipeline + before/after numbers | pending |
+| 6 | Optimised CI pipeline + before/after numbers | **done** |
 | 7 | Docker image, full Compose stack, TypeScript client | pending |
 | 8 | AWS (ECR + ECS) | pending |
 | 9 | Observability, security, interview pack | pending |
@@ -115,6 +115,29 @@ cd backend
 
 The fast/slow split (`@Tag("integration")` + surefire/failsafe) is the
 mechanism behind the pipeline optimisation in Phase 6.
+
+## CI/CD
+
+Two pipelines run on every push to `main`, on the same commit — one
+deliberately unoptimised, one optimised — so the comparison is measured, not
+claimed.
+
+| Pipeline | Wall clock | Runner-seconds |
+|----------|-----------:|---------------:|
+| Baseline (4 runs) | mean **212 s** | 212 s |
+| Optimised, warm cache (2 runs) | mean **108 s** | 142 s |
+| Optimised, cold cache | 208 s | 268 s |
+
+**Steady state: 49% faster.** On a cold cache: no faster at all — the entire
+gain is a caching effect, and [`docs/ci-cd.md`](docs/ci-cd.md) §8 says so
+plainly rather than quoting the flattering number alone.
+
+The decomposition: caching and de-duplication removed **33% of the work**
+(212 → 142 runner-seconds); parallelism compressed what remained by a further
+**24%** (142 runner-seconds → 108 s wall).
+
+The pipeline also **dogfoods the platform** — it registers its own build in
+the registry it just built, uploads the jar, and promotes `DRAFT → PUBLISHED`.
 
 **The black-box suite found four bugs 97 Java tests missed** — a catch-all
 exception handler was turning every client mistake (malformed JSON, unknown
