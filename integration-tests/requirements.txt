@@ -1,0 +1,9 @@
+# Pinned exactly, not with >=.
+#
+# The same discipline this whole platform teaches for artifacts applies to a
+# test framework's own dependencies: a test run that cannot be reproduced
+# cannot be trusted. "It passed on Tuesday" needs to mean something.
+pytest==8.4.2
+requests==2.32.5
+PyYAML==6.0.3
+pytest-html==4.1.1

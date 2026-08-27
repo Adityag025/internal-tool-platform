@@ -104,6 +104,23 @@ class VersionPromotionTest {
     }
 
     @Test
+    @DisplayName("'latest' skips DRAFT, DEPRECATED and REVOKED versions")
+    void latestOnlyConsidersPublished() {
+        when(toolRepository.findByName(TOOL)).thenReturn(Optional.of(tool));
+        when(versionRepository.findByToolNameOrderByMajorPartDescMinorPartDescPatchPartDesc(TOOL))
+                .thenReturn(java.util.List.of(
+                        new ToolVersion(tool, SemanticVersion.parse("9.9"), "p", null, VersionStatus.REVOKED),
+                        new ToolVersion(tool, SemanticVersion.parse("3.0"), "p", null, VersionStatus.DRAFT),
+                        new ToolVersion(tool, SemanticVersion.parse("2.0"), "p", null, VersionStatus.PUBLISHED),
+                        new ToolVersion(tool, SemanticVersion.parse("0.9"), "p", null, VersionStatus.DEPRECATED)));
+
+        assertThat(service.findLatestVersion(TOOL)).get()
+                .extracting(ToolVersion::getVersion)
+                .as("must not float a consumer onto a withdrawn or unreleased build")
+                .isEqualTo("2.0");
+    }
+
+    @Test
     @DisplayName("promoting to the current status is a no-op, so pipeline retries are safe")
     void promotionIsIdempotent() {
         existing("1.2", VersionStatus.PUBLISHED, true);

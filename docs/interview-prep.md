@@ -490,3 +490,189 @@ instance, and it immediately caught a bug: passing the artifact path as a URI
 template variable percent-encodes the slashes, so the whole repository layout
 would have collapsed into the root. Milliseconds, offline, before a container
 ever started."
+
+---
+
+## Phase 4 — Data-driven integration testing
+
+### (B) What you can truthfully say you built in this learning project
+
+- A **reusable pytest framework** for black-box API testing: a loader that
+  turns JSON/YAML case files into parameterised tests, a typed API client that
+  never asserts, and an assertion library whose failures print the request id,
+  status, latency and body.
+- **49 of the 75 tests are data-driven** from four case files — 15 version
+  lookups, 9 client resolutions, 9 promotion transitions, 16 malformed-input
+  cases. Adding a case is a data edit, not a code edit.
+- **Run-scoped isolation**: each run namespaces its tool and clients with a
+  random id, so the suite is re-runnable against a server holding immutable
+  artifacts, and two runs can execute concurrently without colliding.
+- Negative coverage for every edge case that matters: path traversal in names
+  and artifact paths, malformed and corrupted checksums, `latest` as a lookup
+  key, duplicate publishes, registry/store drift, revoked artifacts,
+  malformed JSON, wrong method, wrong content type, unknown endpoints.
+- JUnit XML + self-contained HTML reports, and pytest markers (`smoke`,
+  `negative`, `artifact`, `slow`) so CI can tier its runs.
+- **It found four real bugs that 97 Java tests missed** — and I fixed them.
+
+### (C) Still architectural example only
+
+The CI pipeline (Phases 5-6) and AWS deployment (Phase 8).
+
+---
+
+### The story to actually tell in an interview
+
+This is the strongest single anecdote in the project. Learn it.
+
+> "I had 97 Java tests passing — unit, Spring slice, and Testcontainers
+> integration tests. Then I wrote a black-box Python suite that talks to the
+> service over HTTP with no knowledge of Spring, and on its first run five
+> tests failed. Four were the same bug.
+>
+> I had written a catch-all `@ExceptionHandler(Exception.class)`. That is more
+> specific than nothing, so it outranks Spring's own
+> `DefaultHandlerExceptionResolver` — and it was silently swallowing the
+> framework's exceptions. Malformed JSON returned 500 instead of 400. An
+> unknown URL returned 500 instead of 404. Wrong HTTP method, 500 instead of
+> 405. Wrong content type, 500 instead of 415.
+>
+> Every client mistake was being reported as a server fault. That pages the
+> on-call engineer for somebody's typo, it makes 5xx alerting useless because
+> the baseline is full of noise, and it tells the caller to retry when
+> retrying can never help.
+>
+> The Java tests structurally could not have caught it. They only ever sent
+> requests the controllers were written to accept. You have to be outside the
+> application to send a request it has no handler for. The fix was to extend
+> `ResponseEntityExceptionHandler` so Spring's handlers get their precedence
+> back, while an overridden `handleExceptionInternal` keeps everything in
+> problem+json shape."
+
+Why it lands: it is specific, it names a real mechanism, it shows you
+understand *why* test tiers are not redundant, and it ends with a fix rather
+than a complaint.
+
+---
+
+### 5 beginner questions
+
+1. **What is data-driven testing?**
+   The test logic is written once; the cases live in a data file. One
+   parameterised function covers fifteen inputs instead of fifteen functions.
+
+2. **What is a pytest fixture?**
+   A reusable piece of setup, requested by naming it as a test argument.
+   `scope="session"` means it is built once for the whole run — which is why
+   seeding ~30 HTTP calls costs the suite one second, not one second per test.
+
+3. **What is `conftest.py`?**
+   Where pytest looks for fixtures and hooks shared across a directory. No
+   import needed; tests just name the fixture.
+
+4. **Why pin dependencies exactly instead of `>=`?**
+   Same reason artifacts are immutable: a test run you cannot reproduce cannot
+   be trusted. `>=` means a library release can turn your suite red — or,
+   worse, green — with no change on your side.
+
+5. **What is the difference between a unit test and an integration test here?**
+   The unit test knows the internals and mocks the collaborators; it is fast
+   and precise. The integration test uses real HTTP and a real database; it is
+   slower and proves the pieces actually fit together.
+
+### 5 intermediate questions
+
+1. **You already had 97 Java tests. Justify a second suite in another language.**
+   Not "more tests is better" — a test that shares the application's
+   assumptions cannot find a bug in those assumptions. The Java tests ran
+   inside Spring's object graph and only ever sent requests the controllers
+   were written for. The black-box suite found four bugs in the first run,
+   all of them in requests no controller existed for. The language being
+   different is incidental; the *vantage point* is the point.
+
+2. **How do you keep an integration suite re-runnable against immutable data?**
+   Every run namespaces what it creates with a random id. The data files still
+   use a logical name for readability, and a fixture maps it to the real
+   run-scoped one. This also makes concurrent runs safe, which matters as soon
+   as CI builds several branches at once.
+
+3. **When is data-driven the WRONG approach?**
+   When the test is a *sequence* rather than the same question with different
+   inputs. "Observe, publish a new version, observe again" cannot be expressed
+   as a row in a table without inventing a mini-language in your data file. At
+   that point write a plain test function.
+
+4. **How do you stop data-driven expectations from becoming flaky?**
+   Assert the invariant, not a snapshot. One case here asserted that a
+   floating client resolves to `"2.0"` — and it failed, because another test
+   legitimately published something newer and a floating client is supposed to
+   move. The literal was flaky by construction. It was replaced with a
+   sentinel resolved at run time, so the case asserts "latest equals the
+   newest published version" rather than today's answer to that question.
+
+5. **Why assert on the error `type` URI rather than the message text?**
+   The `type` is a stable, documented identifier; `detail` is prose someone
+   will reword next sprint. Asserting on prose produces a suite that breaks
+   for reasons that are not bugs — which trains people to ignore failures.
+
+### 3 debugging scenarios
+
+1. **"The suite passes locally and fails in CI."**
+   Start with the differences the suite itself controls: is `BASE_URL`
+   pointing at the same build? Are the pinned dependencies actually installed,
+   or did CI resolve something newer? Is another job running against the same
+   server? The run-scoped namespacing exists precisely so the last one is not
+   the answer — but verify it, because a shared-state collision looks exactly
+   like a real bug.
+
+2. **"One parameterised case fails intermittently."**
+   Almost always a hidden dependency on other tests' side effects. Run it
+   alone (`pytest -k <case-id>`); if it passes in isolation, the expectation
+   is coupled to global state. Fix the *expectation* to assert an invariant,
+   not the ordering — reordering tests to make it pass just hides it.
+
+3. **"A test fails in CI and the log is not enough to diagnose it."**
+   That is a defect in the assertion, not in the test. Every failure message
+   should carry enough to act on: the full URL, the status, the response body,
+   and the correlation id you can grep for in the service log. If you had to
+   re-run it locally to find out what happened, improve the assertion helper —
+   once, for all the cases that use it.
+
+### 30-second explanation
+
+"I built a data-driven integration test framework in Python. The test logic is
+written once; the cases live in JSON and YAML files that anyone can read and
+extend — about fifty of the seventy-five tests come from four data files.
+It talks to the service purely over HTTP, so it tests it the way a real client
+would, and on its first run it found four bugs that ninety-seven Java tests
+had missed."
+
+### 2-minute explanation
+
+"The suite has three layers. `framework/` holds the reusable machinery: a
+loader that turns JSON or YAML into parameterised pytest cases with readable
+ids, an API client that wraps requests and deliberately never asserts — a 4xx
+is a valid expected outcome — and an assertion library where every failure
+prints the URL, status, latency, body, and the correlation id you can grep for
+in the service log. `data/` holds the cases. `tests/` holds one well-reviewed
+assertion path per behaviour.
+
+The argument for data-driven is really an argument about what happens over
+time. Fifteen near-identical test methods means adding a case costs code, so
+people stop adding cases; improving an assertion means editing fifteen copies,
+so nobody improves it; and a missing case looks exactly like the others —
+absent. With a table, a missing row in a state machine is visible at a glance.
+The promotion transitions are the clearest example: a state machine is
+naturally a table.
+
+The hard part was making it re-runnable. Published artifacts are immutable and
+there is no delete endpoint, so a suite that hard-coded the tool name would
+pass once and then 409 forever. Every run namespaces its own tool and clients
+with a random id, which also means concurrent CI runs cannot collide.
+
+And it earned its keep immediately. Ninety-seven Java tests were green, and
+the black-box suite failed five tests on the first run. Four were one bug: a
+catch-all exception handler was outranking Spring's own resolver and turning
+every client mistake into a 500 — malformed JSON, unknown URL, wrong method,
+wrong content type. That is the kind of bug an in-process test cannot find,
+because it only ever sends requests the application was written to accept."

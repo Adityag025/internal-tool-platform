@@ -25,14 +25,14 @@ and deploy internal tools.
 
 ## Status
 
-Phases 1-3 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
+Phases 1-4 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
 | 1 | Tool Registry Service (Spring Boot + PostgreSQL) | **done** |
 | 2 | Clients & version pinning | **done** |
 | 3 | Artifact distribution, checksums & promotion | **done** |
-| 4 | Python data-driven pytest framework | pending |
+| 4 | Python data-driven pytest framework | **done** |
 | 5 | Baseline CI pipeline + measurement | pending |
 | 6 | Optimised CI pipeline + before/after numbers | pending |
 | 7 | Docker image, full Compose stack, TypeScript client | pending |
@@ -94,16 +94,32 @@ See [`docs/artifactory.md`](docs/artifactory.md).
 
 ## Tests
 
-```bash
-cd backend
+Three tiers, each catching what the others structurally cannot.
 
-./mvnw test      # FAST lane: 71 unit + slice tests, no Docker, ~6 s
-./mvnw verify    # + SLOW lane: 25 Testcontainers tests on real PostgreSQL
+```bash
+# Java: unit/slice (fast) and Testcontainers (slow)
+cd backend
+./mvnw test      # 72 tests, no Docker, ~5 s
+./mvnw verify    # + 25 Testcontainers tests on real PostgreSQL, ~19 s
+
+# Python: black-box, data-driven, against a running platform
+./scripts/run-integration-tests.sh            # 75 tests, ~2 s
+./scripts/run-integration-tests.sh -m smoke   # ~1 s
 ```
 
-The split is deliberate: `@Tag("integration")` tests are excluded by surefire
-and run by failsafe. It is the mechanism behind the pipeline optimisation in
-Phase 6.
+| Tier | Count | Needs | Answers |
+|------|-------|-------|---------|
+| Unit / slice | 72 | nothing | is the logic right? |
+| Component integration | 25 | Docker | do the pieces fit? |
+| Black-box API (pytest) | 75 | running platform | does it behave correctly from outside? |
+
+The fast/slow split (`@Tag("integration")` + surefire/failsafe) is the
+mechanism behind the pipeline optimisation in Phase 6.
+
+**The black-box suite found four bugs 97 Java tests missed** — a catch-all
+exception handler was turning every client mistake (malformed JSON, unknown
+URL, wrong method, wrong content type) into a 500. See
+[`docs/testing.md`](docs/testing.md) §5.
 
 ## API (Phase 1)
 
@@ -180,7 +196,10 @@ Errors are RFC 7807 `application/problem+json`:
 ```
 internal-tool-platform/
 ├── backend/            Spring Boot Tool Registry Service
-├── integration-tests/  Python + pytest data-driven framework   (Phase 4)
+├── integration-tests/  Python + pytest data-driven framework
+│   ├── data/           JSON/YAML case files - the executable spec
+│   ├── framework/      loader, API client, reusable assertions
+│   └── tests/          one assertion path per behaviour
 ├── frontend/           small TypeScript client                 (Phase 7)
 ├── docker/             docker-compose.yml, Dockerfile          (Phase 7)
 ├── .github/workflows/  CI/CD pipeline                          (Phase 5-6)
@@ -192,5 +211,6 @@ internal-tool-platform/
 
 - [`docs/architecture.md`](docs/architecture.md) — components, both flows, data model, container networking, secret management
 - [`docs/roadmap.md`](docs/roadmap.md) — the nine phases and why they are in that order
+- [`docs/testing.md`](docs/testing.md) — the three test tiers, why data-driven beats duplicated methods, fixtures and run isolation
 - [`docs/artifactory.md`](docs/artifactory.md) — artifact repositories, coordinates, immutability, checksums, promotion, and the port/adapter split
 - [`docs/interview-prep.md`](docs/interview-prep.md) — per-phase questions, debugging scenarios, and the honesty rules for describing this work

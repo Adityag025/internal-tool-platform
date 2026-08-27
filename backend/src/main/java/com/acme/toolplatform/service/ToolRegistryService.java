@@ -195,9 +195,21 @@ public class ToolRegistryService {
         return version;
     }
 
-    /** Only used where a client has EXPLICITLY opted into floating versions. */
+    /**
+     * The newest PUBLISHED version. Only used where a client has EXPLICITLY
+     * opted into floating versions.
+     *
+     * DRAFT, DEPRECATED and REVOKED versions are skipped deliberately. A
+     * client that opted in to "latest" asked to follow releases - it did not
+     * ask to be moved onto a build that was never released, one you are being
+     * asked to migrate off, or one that was withdrawn for a CVE. Without this
+     * filter, revoking the newest version would break every floating consumer
+     * instead of protecting them.
+     */
     @Transactional(readOnly = true)
     public Optional<ToolVersion> findLatestVersion(String toolName) {
-        return listVersions(toolName).stream().findFirst();
+        return listVersions(toolName).stream()
+                .filter(v -> v.getStatus() == VersionStatus.PUBLISHED)
+                .findFirst();
     }
 }
