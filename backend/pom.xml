@@ -20,6 +20,17 @@
   <properties>
     <java.version>21</java.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <!--
+      Lets CI run the two test lanes as SEPARATE PARALLEL JOBS.
+
+      `mvn verify` normally runs surefire (unit) and then failsafe
+      (integration). With -DskipUnitTests=true the integration job skips the
+      unit tests that another job is already running concurrently, instead of
+      duplicating them. Note this is a distinct flag from -DskipTests, which
+      would skip both lanes.
+    -->
+    <skipUnitTests>false</skipUnitTests>
   </properties>
 
   <dependencies>
@@ -103,6 +114,7 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
           <excludedGroups>integration</excludedGroups>
+          <skip>${skipUnitTests}</skip>
         </configuration>
       </plugin>
 
