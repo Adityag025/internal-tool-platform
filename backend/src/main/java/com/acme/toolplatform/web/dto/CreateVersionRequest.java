@@ -15,6 +15,12 @@ public record CreateVersionRequest(
 
         @NotBlank(message = "artifactPath is required")
         @Size(max = 512)
+        // Safe repository path only: segments of [A-Za-z0-9._-] joined by "/".
+        // No leading slash, no "..", so a crafted path cannot escape the
+        // repository root. Defence in depth - the store checks this again.
+        @Pattern(
+            regexp = "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$",
+            message = "artifactPath must be a relative repository path, e.g. tool/1.2/tool-1.2.jar")
         String artifactPath,
 
         @Pattern(

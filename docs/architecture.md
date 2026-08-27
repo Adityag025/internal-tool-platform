@@ -67,7 +67,7 @@ Tool Registry Service
 Exactly the requested artifact + its SHA-256
 ```
 
-Steps 1-3 and 5 exist as of Phase 1. Steps 4 and 6 arrive in Phase 3.
+All six steps exist as of Phase 3. See [artifactory.md](artifactory.md) for the storage layer.
 
 ## 5. Data model
 

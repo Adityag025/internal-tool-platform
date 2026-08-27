@@ -1,6 +1,10 @@
 package com.acme.toolplatform.web.error;
 
+import com.acme.toolplatform.service.exception.ArtifactMissingException;
+import com.acme.toolplatform.service.exception.ArtifactStoreException;
+import com.acme.toolplatform.service.exception.ChecksumMismatchException;
 import com.acme.toolplatform.service.exception.DuplicateResourceException;
+import com.acme.toolplatform.service.exception.IllegalPromotionException;
 import com.acme.toolplatform.service.exception.InvalidVersionException;
 import com.acme.toolplatform.service.exception.ResourceNotFoundException;
 import com.acme.toolplatform.service.exception.VersionRevokedException;
@@ -56,6 +60,47 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(VersionRevokedException.class)
     public ProblemDetail handleRevoked(VersionRevokedException e, HttpServletRequest req) {
         return problem(HttpStatus.GONE, "Version Revoked", "version-revoked", e.getMessage(), req);
+    }
+
+    @ExceptionHandler(IllegalPromotionException.class)
+    public ProblemDetail handleIllegalPromotion(IllegalPromotionException e, HttpServletRequest req) {
+        return problem(HttpStatus.CONFLICT, "Illegal Promotion", "illegal-promotion", e.getMessage(), req);
+    }
+
+    /**
+     * The next three are 502 Bad Gateway, not 404 or 500.
+     *
+     * 502 says: this service is fine, but the thing BEHIND it - the artifact
+     * store - failed, is unreachable, or disagrees with our own records. That
+     * points the on-call engineer at the right system immediately, and it
+     * tells the caller that retrying later is reasonable.
+     */
+    @ExceptionHandler(ArtifactMissingException.class)
+    public ProblemDetail handleArtifactMissing(ArtifactMissingException e, HttpServletRequest req) {
+        log.error("artifact.missing path={} message={}", req.getRequestURI(), e.getMessage());
+        return problem(HttpStatus.BAD_GATEWAY, "Artifact Missing From Store", "artifact-missing",
+                e.getMessage() + " (the registry knows this version, the store does not - "
+                        + "this is a platform inconsistency, not a bad request)", req);
+    }
+
+    @ExceptionHandler(ChecksumMismatchException.class)
+    public ProblemDetail handleChecksumMismatch(ChecksumMismatchException e, HttpServletRequest req) {
+        log.error("artifact.checksum.mismatch path={} message={}", req.getRequestURI(), e.getMessage());
+        return problem(HttpStatus.BAD_GATEWAY, "Artifact Checksum Mismatch", "checksum-mismatch",
+                e.getMessage(), req);
+    }
+
+    @ExceptionHandler(ArtifactStoreException.class)
+    public ProblemDetail handleArtifactStore(ArtifactStoreException e, HttpServletRequest req) {
+        log.error("artifact.store.error path={} message={}", req.getRequestURI(), e.getMessage(), e);
+        return problem(HttpStatus.BAD_GATEWAY, "Artifact Store Unavailable", "artifact-store-error",
+                e.getMessage(), req);
+    }
+
+    /** Size limits, empty uploads, and similar caller mistakes. */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ProblemDetail handleIllegalArgument(IllegalArgumentException e, HttpServletRequest req) {
+        return problem(HttpStatus.BAD_REQUEST, "Bad Request", "bad-request", e.getMessage(), req);
     }
 
     /** Bean-validation failures on @RequestBody -> 422 with per-field detail. */

@@ -2,6 +2,8 @@ package com.acme.toolplatform.web;
 
 import com.acme.toolplatform.domain.Client;
 import com.acme.toolplatform.domain.ClientToolConfiguration;
+import com.acme.toolplatform.service.ArtifactDownload;
+import com.acme.toolplatform.service.ArtifactService;
 import com.acme.toolplatform.service.ClientConfigurationService;
 import com.acme.toolplatform.service.VersionResolution;
 import com.acme.toolplatform.web.dto.ClientConfigurationResponse;
@@ -13,6 +15,7 @@ import com.acme.toolplatform.web.dto.SetVersionRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
+import org.springframework.core.io.Resource;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
@@ -31,9 +34,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class ClientController {
 
     private final ClientConfigurationService clients;
+    private final ArtifactService artifacts;
 
-    public ClientController(ClientConfigurationService clients) {
+    public ClientController(ClientConfigurationService clients, ArtifactService artifacts) {
         this.clients = clients;
+        this.artifacts = artifacts;
     }
 
     @PostMapping
@@ -104,6 +109,23 @@ public class ClientController {
             response.header("Deprecation", "true");
         }
         return response.body(ResolvedVersionResponse.from(clientName, toolName, resolution));
+    }
+
+    /**
+     * The whole point of the platform, in one call.
+     *
+     * "Give me my copy of data-validator" - the client names no version at
+     * all. The platform resolves its configuration to one exact version,
+     * fetches those exact bytes, verifies the checksum, and streams them back.
+     * Consumers stay decoupled from version numbers; the pin is the contract.
+     */
+    @GetMapping("/{clientName}/tools/{toolName}/artifact")
+    public ResponseEntity<Resource> downloadForClient(
+            @PathVariable String clientName,
+            @PathVariable String toolName) {
+
+        ArtifactDownload download = artifacts.downloadForClient(clientName, toolName);
+        return ArtifactController.artifactResponse(download);
     }
 
     @DeleteMapping("/{clientName}/tools/{toolName}/version")

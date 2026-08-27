@@ -2,6 +2,10 @@
 backend/target/
 *.class
 
+# Locally stored artifacts (bytes never belong in git)
+backend/data/
+data/
+
 # Python
 integration-tests/.venv/
 __pycache__/

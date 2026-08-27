@@ -325,3 +325,168 @@ mutated.
 LATEST does exist, but it is opt-in per client, it is recorded, and it still
 resolves to a concrete logged version. The problem with 'latest' was never
 floating — it was floating invisibly."
+
+---
+
+## Phase 3 — Artifact distribution, checksums & promotion
+
+### (B) What you can truthfully say you built in this learning project
+
+- An `ArtifactStore` **port** with two adapters — a filesystem one for
+  development/CI and a **JFrog Artifactory** one over its REST API — selected
+  at startup by configuration, with nothing in the service layer aware of which.
+- Real byte distribution: `PUT .../artifact` to upload (what CI does after a
+  green build), `GET .../artifact` to download, and a client-facing
+  `GET /clients/{c}/tools/{t}/artifact` where **the consumer never names a version**.
+- **SHA-256 integrity end to end**: computed at upload, sent to Artifactory in
+  `X-Checksum-Sha256` so it verifies on receipt, stored in the registry,
+  re-verified on every download, and returned in the `ETag` and
+  `X-Artifact-Sha256` headers so the client can check independently.
+- **Immutability at three layers** — DB unique constraint, a write-once
+  `sealWith()` on the domain object, and stores that refuse to overwrite.
+- A **promotion state machine** (`DRAFT → PUBLISHED ↔ DEPRECATED → REVOKED`,
+  `REVOKED` terminal) that moves the same bytes without rebuilding, with a
+  release gate that refuses to publish a version having no artifact.
+- Correct failure semantics: **502** for registry/store drift and checksum
+  mismatch (our inconsistency), **410** for revoked, **409** for immutability
+  and illegal promotions, **404** only for genuinely unknown coordinates.
+- A protocol-level test of the Artifactory adapter against a mock HTTP server
+  that **caught a real path-encoding bug** before any container ran.
+- 96 tests total (71 fast, 25 integration).
+
+### (C) Still architectural example only
+
+The CI pipeline, AWS deployment, and the Python data-driven test framework.
+Also: a **live** Artifactory was configured but did not boot reliably on this
+machine (see `docs/artifactory.md` §10). Say that plainly — "I integrated
+against the Artifactory REST API and verified the adapter against a mock
+server; I did not run a production Artifactory instance" is both honest and
+more impressive than a vague claim.
+
+### 5 beginner questions
+
+1. **What is an artifact repository, and why not just use git?**
+   Git stores diffs of text and makes clones enormous when you commit binaries.
+   An artifact repository is purpose-built for build outputs: unique
+   coordinates, immutability, checksums, and lifecycle policies.
+
+2. **What are artifact coordinates?**
+   The unique address of exactly one build. `com.acme:data-validator:1.2` in
+   Maven, `registry/tools/data-validator:1.2` in Docker,
+   `internal-tools-local/data-validator/1.2/data-validator-1.2.jar` here.
+
+3. **Why does every artifact have a SHA-256?**
+   So you can prove the bytes you received are the bytes that were published.
+   It is checked on upload, on download, and by the consumer.
+
+4. **What does "immutable artifact" mean?**
+   A published coordinate never changes content. Wanting different bytes means
+   wanting a new version.
+
+5. **What is artifact promotion?**
+   Moving the *same* bytes through a lifecycle — draft, published, deprecated,
+   revoked — by changing a label, never by rebuilding.
+
+### 5 intermediate questions
+
+1. **Why promote instead of rebuilding for each environment?**
+   A rebuild produces different bytes: different timestamps, possibly a
+   different transitive dependency, a different compiler patch. So "the thing
+   we tested in staging" and "the thing we released to production" would not
+   be the same artifact, and every test result recorded before the rebuild
+   would be worthless. Promotion is what makes *build once, deploy everywhere*
+   true rather than aspirational.
+
+2. **Why is a missing artifact 502 and not 404?**
+   404 means the caller asked for something that does not exist. Here the
+   registry says the version exists and the store disagrees — the platform is
+   internally inconsistent. Returning 404 sends the consumer hunting for a typo
+   when the fix is on our side. 502 says "the system behind me failed", which
+   also tells the caller that retrying is reasonable.
+
+3. **You have an interface with two implementations. Justify it.**
+   Three concrete payoffs, not architectural taste. Integration tests exercise
+   the whole distribution path against a temp directory, so they need no
+   Artifactory. CI does not go red because an external service is down. And
+   swapping to S3 or Nexus is a new adapter rather than a refactor. The cost is
+   one interface and one config property.
+
+4. **How do you test an integration with an external service you cannot run?**
+   Against a mock HTTP server, asserting the exact request produced — method,
+   URL, headers, body — and how each response class is interpreted. A live
+   instance would mostly be testing the vendor's code. In this project that
+   approach caught a genuine bug: passing a multi-segment path as a URI
+   template variable percent-encodes its slashes to `%2F`, collapsing the
+   repository layout. Found offline in milliseconds.
+
+5. **Where exactly is immutability enforced, and why in more than one place?**
+   `UNIQUE (tool_id, version)` in PostgreSQL stops two concurrent publishes.
+   `ToolVersion.sealWith()` is write-once and stops re-uploading bytes for a
+   sealed version. The stores refuse to overwrite an existing path. These are
+   not duplicates — each closes a hole the others do not, because each layer
+   is reachable by a different route.
+
+### 3 debugging scenarios
+
+1. **"Downloads started failing with 502 checksum-mismatch overnight."**
+   The bytes in the store no longer hash to what the registry recorded. Someone
+   or something wrote to the store out of band — a manual "fix", a restored
+   backup, a sync job, or genuine corruption. Do **not** update the recorded
+   checksum to make the error go away: that destroys the only evidence the
+   artifact changed. Find who wrote to the path, then re-publish as a new
+   version.
+
+2. **"Artifacts upload fine but land in the wrong place in Artifactory."**
+   Almost always URL encoding. Check whether the multi-segment path is being
+   sent as a single template variable — `%2F` in the request URL is the
+   giveaway. A protocol-level test that asserts on the exact URI catches this;
+   an end-to-end test only shows a confusing 404 much later.
+
+3. **"CI publishes a version, then the deploy says the artifact does not exist."**
+   Registry and store are out of step. Either the metadata row was created but
+   the upload step failed and the pipeline did not fail with it, or they point
+   at different environments. Check `/actuator/health` for which store the
+   service actually selected — it is logged at startup as
+   `artifact.store.selected` — and make the pipeline's publish step fail loudly
+   rather than continue past a failed upload.
+
+### 30-second explanation (updated)
+
+"It's an internal tool distribution platform. CI publishes an immutable
+versioned artifact with a SHA-256; consumers pin to an exact version and
+download it without ever naming a version number in their own code. The
+platform verifies the checksum on every download and refuses to serve bytes
+that do not match what was published. Releases move through a promotion
+lifecycle — the same bytes get relabelled, never rebuilt — so what was tested
+is provably what ships."
+
+### 2-minute explanation (the Phase 3 half)
+
+"Phase 3 is where it stops handling coordinates and starts handling bytes.
+
+There's an ArtifactStore interface with two implementations — a filesystem one
+and a JFrog Artifactory one over its REST API. That is not abstraction for its
+own sake: it means the integration tests exercise the entire upload, checksum,
+promote, download path without Artifactory running, so CI does not depend on an
+external service being up.
+
+Integrity runs end to end. The SHA-256 is computed at upload and sent to
+Artifactory in a header so it verifies on receipt; it is stored in the registry;
+it is re-verified against the actual bytes on every download; and it goes back
+to the client in the ETag so they can check independently. A mismatch is a 502
+and the bytes are not served — serving 'probably fine' bytes defeats the entire
+point of having a checksum.
+
+Promotion is the release mechanism. DRAFT to PUBLISHED is a gate that refuses a
+version with no artifact. PUBLISHED and DEPRECATED move back and forth. REVOKED
+is terminal, because un-revoking would let a consumer who correctly stopped
+using an artifact be silently handed it again. Nothing in that flow rebuilds
+anything — the checksum is identical before and after, and there's a test that
+asserts exactly that.
+
+The part I'd actually call out in an interview is the adapter test. I tested
+the Artifactory integration against a mock HTTP server rather than a live
+instance, and it immediately caught a bug: passing the artifact path as a URI
+template variable percent-encodes the slashes, so the whole repository layout
+would have collapsed into the root. Milliseconds, offline, before a container
+ever started."

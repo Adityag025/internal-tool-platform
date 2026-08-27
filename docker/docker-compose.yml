@@ -34,8 +34,47 @@ services:
     networks:
       - platform-net
 
+  # ---------------------------------------------------------------------
+  # JFrog Artifactory OSS - the real artifact repository.
+  #
+  # Started under a compose PROFILE, so `docker compose up -d` gives you just
+  # PostgreSQL (fast, ~200MB) and only `--profile artifactory up -d` pulls in
+  # this 3.8GB service. Day-to-day development and CI use the filesystem
+  # adapter and never need it running.
+  # ---------------------------------------------------------------------
+  artifactory:
+    image: releases-docker.jfrog.io/jfrog/artifactory-oss:7.98.17
+    container_name: tool-platform-artifactory
+    profiles: ["artifactory"]
+    ports:
+      # 8082 is the JFrog router (UI + REST). Host 8082 to avoid our app on 8081.
+      - "${ARTIFACTORY_HOST_PORT:-8182}:8082"
+    volumes:
+      - artifactory-data:/var/opt/jfrog/artifactory
+    environment:
+      # Artifactory encrypts stored credentials with a master key. On a fresh
+      # volume it has none and refuses to boot, so we supply one explicitly.
+      # It lives in .env (gitignored) - losing it makes stored secrets
+      # unreadable, which is exactly why it is a secret and not a default.
+      JF_SHARED_SECURITY_MASTERKEY: ${ARTIFACTORY_MASTER_KEY:?set ARTIFACTORY_MASTER_KEY in .env}
+      # The microservices inside the container authenticate to each other with
+      # the join key. Both keys are required on a fresh volume; supplying only
+      # one gets you a FATAL a few minutes into boot.
+      JF_SHARED_SECURITY_JOINKEY: ${ARTIFACTORY_JOIN_KEY:?set ARTIFACTORY_JOIN_KEY in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8082/router/api/v1/system/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      # Artifactory is slow to boot (2-4 minutes on first run) - a short
+      # retry budget would mark it unhealthy while it is still starting.
+      retries: 40
+      start_period: 120s
+    networks:
+      - platform-net
+
 volumes:
   postgres-data:
+  artifactory-data:
 
 networks:
   platform-net:

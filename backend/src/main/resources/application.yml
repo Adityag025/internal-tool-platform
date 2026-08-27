@@ -30,6 +30,26 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+# ---------------------------------------------------------------- platform
+platform:
+  artifacts:
+    # filesystem | artifactory. Local dev and CI use filesystem so neither
+    # needs a running Artifactory; the artifactory profile exercises the real
+    # adapter. Same code path either way.
+    store: ${ARTIFACT_STORE:filesystem}
+    max-artifact-bytes: 104857600   # 100 MB
+
+    filesystem:
+      root: ${ARTIFACT_ROOT:./data/artifacts}
+
+    artifactory:
+      # NO DEFAULTS for credentials, on purpose. If they are missing the app
+      # refuses to start rather than silently running unauthenticated.
+      base-url: ${ARTIFACTORY_URL:}
+      repository: ${ARTIFACTORY_REPO:internal-tools-local}
+      username: ${ARTIFACTORY_USERNAME:}
+      password: ${ARTIFACTORY_PASSWORD:}
+
 server:
   port: ${SERVER_PORT:8081}
   error:

@@ -17,6 +17,7 @@ import com.acme.toolplatform.domain.Tool;
 import com.acme.toolplatform.domain.ToolVersion;
 import com.acme.toolplatform.domain.VersionSelector;
 import com.acme.toolplatform.domain.VersionStatus;
+import com.acme.toolplatform.service.ArtifactService;
 import com.acme.toolplatform.service.ClientConfigurationService;
 import com.acme.toolplatform.service.VersionResolution;
 import com.acme.toolplatform.service.exception.ResourceNotFoundException;
@@ -35,6 +36,10 @@ class ClientControllerTest {
     @Autowired MockMvc mockMvc;
 
     @MockitoBean ClientConfigurationService clients;
+
+    // ClientController also exposes the client-facing artifact download, so the
+    // slice needs this collaborator even though these tests do not exercise it.
+    @MockitoBean ArtifactService artifacts;
 
     private ToolVersion version(String raw, VersionStatus status) {
         return new ToolVersion(new Tool("data-validator", null), SemanticVersion.parse(raw),

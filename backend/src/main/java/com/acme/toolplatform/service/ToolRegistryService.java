@@ -7,10 +7,15 @@ import com.acme.toolplatform.domain.VersionStatus;
 import com.acme.toolplatform.repository.ToolRepository;
 import com.acme.toolplatform.repository.ToolVersionRepository;
 import com.acme.toolplatform.service.exception.DuplicateResourceException;
+import com.acme.toolplatform.service.exception.IllegalPromotionException;
 import com.acme.toolplatform.service.exception.InvalidVersionException;
 import com.acme.toolplatform.service.exception.ResourceNotFoundException;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -30,6 +35,25 @@ import org.springframework.transaction.annotation.Transactional;
 public class ToolRegistryService {
 
     private static final Logger log = LoggerFactory.getLogger(ToolRegistryService.class);
+
+    /**
+     * The promotion state machine.
+     *
+     * Artifact promotion means moving the SAME BYTES through a lifecycle -
+     * never rebuilding to move forward. A rebuild would produce different
+     * bytes, so "the thing we tested" and "the thing we released" would no
+     * longer be the same artifact, and every test result before the promotion
+     * would be worthless.
+     *
+     * REVOKED is terminal on purpose: un-revoking would mean a consumer who
+     * correctly stopped using an artifact could be silently handed it again.
+     */
+    private static final Map<VersionStatus, Set<VersionStatus>> LEGAL_TRANSITIONS =
+            new EnumMap<>(Map.of(
+                    VersionStatus.DRAFT,      EnumSet.of(VersionStatus.PUBLISHED, VersionStatus.REVOKED),
+                    VersionStatus.PUBLISHED,  EnumSet.of(VersionStatus.DEPRECATED, VersionStatus.REVOKED),
+                    VersionStatus.DEPRECATED, EnumSet.of(VersionStatus.PUBLISHED, VersionStatus.REVOKED),
+                    VersionStatus.REVOKED,    EnumSet.noneOf(VersionStatus.class)));
 
     private final ToolRepository toolRepository;
     private final ToolVersionRepository versionRepository;
@@ -138,6 +162,37 @@ public class ToolRegistryService {
         log.info("version.resolved tool={} version={} status={} latencyMs={}",
                 toolName, found.getVersion(), found.getStatus(), millis);
         return found;
+    }
+
+    /**
+     * Promote a version through its lifecycle without touching its bytes.
+     *
+     * DRAFT -> PUBLISHED is the release gate: it refuses to publish a version
+     * that has no artifact, so "PUBLISHED" can never mean "a row exists but
+     * there is nothing to download".
+     */
+    @Transactional
+    public ToolVersion promote(String toolName, String rawVersion, VersionStatus target) {
+        ToolVersion version = resolveExactVersion(toolName, rawVersion);
+        VersionStatus current = version.getStatus();
+
+        if (current == target) {
+            return version; // idempotent: re-running a pipeline step is not an error
+        }
+        if (!LEGAL_TRANSITIONS.getOrDefault(current, Set.of()).contains(target)) {
+            throw new IllegalPromotionException(
+                    "Cannot promote '" + toolName + "' " + rawVersion + " from " + current + " to " + target
+                            + "; allowed from " + current + ": " + LEGAL_TRANSITIONS.getOrDefault(current, Set.of()));
+        }
+        if (target == VersionStatus.PUBLISHED && !version.hasArtifact()) {
+            throw new IllegalPromotionException(
+                    "Cannot publish '" + toolName + "' " + rawVersion + ": no artifact has been uploaded yet");
+        }
+
+        version.promoteTo(target);
+        versionRepository.save(version);
+        log.info("version.promoted tool={} version={} from={} to={}", toolName, rawVersion, current, target);
+        return version;
     }
 
     /** Only used where a client has EXPLICITLY opted into floating versions. */

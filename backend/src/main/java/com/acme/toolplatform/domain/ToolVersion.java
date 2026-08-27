@@ -133,9 +133,26 @@ public class ToolVersion {
         return status;
     }
 
-    /** Status is the ONLY mutable field - see {@link VersionStatus}. */
+    /** Status is mutable - see {@link VersionStatus} and artifact promotion. */
     public void promoteTo(VersionStatus newStatus) {
         this.status = newStatus;
+    }
+
+    /** True once bytes have been uploaded and the checksum recorded. */
+    public boolean hasArtifact() {
+        return checksumSha256 != null;
+    }
+
+    /**
+     * Record the SHA-256 of the uploaded bytes. Write-once: after this, the
+     * version's identity includes its content hash and can never change.
+     */
+    public void sealWith(String sha256) {
+        if (this.checksumSha256 != null) {
+            throw new IllegalStateException(
+                    "Version " + version + " is already sealed with checksum " + checksumSha256);
+        }
+        this.checksumSha256 = sha256;
     }
 
     public Instant getCreatedAt() {

@@ -25,13 +25,13 @@ and deploy internal tools.
 
 ## Status
 
-Phases 1-2 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
+Phases 1-3 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
 | 1 | Tool Registry Service (Spring Boot + PostgreSQL) | **done** |
 | 2 | Clients & version pinning | **done** |
-| 3 | Artifactory integration & artifact download | pending |
+| 3 | Artifact distribution, checksums & promotion | **done** |
 | 4 | Python data-driven pytest framework | pending |
 | 5 | Baseline CI pipeline + measurement | pending |
 | 6 | Optimised CI pipeline + before/after numbers | pending |
@@ -77,15 +77,28 @@ cd backend && ./mvnw spring-boot:run
 
 # 5. the Phase 2 scenario: three clients, three versions, then a rollback
 ./scripts/demo-pinning.sh
+
+# 6. the Phase 3 release pipeline: DRAFT -> upload -> promote -> download
+./scripts/demo-artifacts.sh
 ```
+
+Artifacts go to a local directory by default. To use real JFrog Artifactory
+instead (3.8 GB image, behind a compose profile):
+
+```bash
+docker compose -f docker/docker-compose.yml --profile artifactory up -d
+./scripts/setup-artifactory.sh
+```
+
+See [`docs/artifactory.md`](docs/artifactory.md).
 
 ## Tests
 
 ```bash
 cd backend
 
-./mvnw test      # FAST lane: 44 unit + slice tests, no Docker, ~4 s
-./mvnw verify    # + SLOW lane: 16 Testcontainers tests on real PostgreSQL
+./mvnw test      # FAST lane: 71 unit + slice tests, no Docker, ~6 s
+./mvnw verify    # + SLOW lane: 25 Testcontainers tests on real PostgreSQL
 ```
 
 The split is deliberate: `@Tag("integration")` tests are excluded by surefire
@@ -119,6 +132,28 @@ Phase 6.
 `PUT` rather than `POST`: a client has exactly one version decision per tool,
 it lives at a known URL, and the operation must be idempotent so a retried
 deployment cannot create duplicates.
+
+### Artifacts (Phase 3)
+
+| Method | Path | Purpose | Codes |
+|--------|------|---------|-------|
+| `PUT`  | `/api/v1/tools/{tool}/versions/{v}/artifact` | Upload bytes (CI does this) | 201, 400, 409, 410 |
+| `GET`  | `/api/v1/tools/{tool}/versions/{v}/artifact` | Download by exact coordinates | 200, 404, 410, **502** |
+| `POST` | `/api/v1/tools/{tool}/versions/{v}/promotion` | Move the same bytes through the lifecycle | 200, 409 |
+| `GET`  | `/api/v1/clients/{client}/tools/{tool}/artifact` | **The client's own copy** — no version named | 200, 404, 410, 502 |
+
+The SHA-256 is verified on every download and returned in the `ETag` and
+`X-Artifact-Sha256` headers so the client can re-verify locally.
+
+```bash
+# what CI does after a green build
+curl -X PUT localhost:8081/api/v1/tools/data-validator/versions/1.2/artifact \
+     -H 'Content-Type: application/octet-stream' \
+     --data-binary @target/data-validator-1.2.jar
+
+# what a consumer does - it never names a version
+curl -OJ localhost:8081/api/v1/clients/client-a/tools/data-validator/artifact
+```
 
 **Rolling back is one call** — no rebuild, no artifact change:
 
@@ -157,4 +192,5 @@ internal-tool-platform/
 
 - [`docs/architecture.md`](docs/architecture.md) — components, both flows, data model, container networking, secret management
 - [`docs/roadmap.md`](docs/roadmap.md) — the nine phases and why they are in that order
+- [`docs/artifactory.md`](docs/artifactory.md) — artifact repositories, coordinates, immutability, checksums, promotion, and the port/adapter split
 - [`docs/interview-prep.md`](docs/interview-prep.md) — per-phase questions, debugging scenarios, and the honesty rules for describing this work
