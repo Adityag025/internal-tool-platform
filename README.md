@@ -25,7 +25,7 @@ and deploy internal tools.
 
 ## Status
 
-Phases 1-4 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
+Phases 1-5 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
@@ -33,7 +33,7 @@ Phases 1-4 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 | 2 | Clients & version pinning | **done** |
 | 3 | Artifact distribution, checksums & promotion | **done** |
 | 4 | Python data-driven pytest framework | **done** |
-| 5 | Baseline CI pipeline + measurement | pending |
+| 5 | Baseline CI pipeline + measurement | **done** |
 | 6 | Optimised CI pipeline + before/after numbers | pending |
 | 7 | Docker image, full Compose stack, TypeScript client | pending |
 | 8 | AWS (ECR + ECS) | pending |
@@ -211,6 +211,7 @@ internal-tool-platform/
 
 - [`docs/architecture.md`](docs/architecture.md) — components, both flows, data model, container networking, secret management
 - [`docs/roadmap.md`](docs/roadmap.md) — the nine phases and why they are in that order
+- [`docs/ci-cd.md`](docs/ci-cd.md) — every pipeline stage explained, secret scoping, the measured baseline, and the same pipeline in Jenkins
 - [`docs/testing.md`](docs/testing.md) — the three test tiers, why data-driven beats duplicated methods, fixtures and run isolation
 - [`docs/artifactory.md`](docs/artifactory.md) — artifact repositories, coordinates, immutability, checksums, promotion, and the port/adapter split
 - [`docs/interview-prep.md`](docs/interview-prep.md) — per-phase questions, debugging scenarios, and the honesty rules for describing this work

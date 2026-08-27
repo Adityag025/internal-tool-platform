@@ -9,7 +9,7 @@ starts until the previous phase has been demonstrated working.
 | **2** | Clients & version pinning: `clients`, `client_tool_configuration`, `PUT/GET/DELETE /clients/{client}/tools/{tool}/version`, opt-in `latest`, 410 for revoked | Version pinning, per-client configuration, rollback as a config change, referential integrity | **DONE** |
 | **3** | Artifact distribution: `ArtifactStore` port with filesystem + Artifactory adapters, upload/download of real bytes, SHA-256 verified on the way out, promotion state machine, client-facing download | Artifact repositories, coordinates, checksums, immutability, promotion, ports & adapters | **DONE** |
 | **4** | Python pytest data-driven framework: JSON/YAML case files, reusable fixtures + assertions, run-scoped isolation, negative/edge cases, JUnit + HTML reports | Data-driven testing, black-box API testing, test data as executable specification | **DONE** |
-| **5** | **Baseline** GitHub Actions pipeline, deliberately unoptimised. Measure wall-clock. | CI stages, fail-fast, what "slow" actually looks like | pending |
+| **5** | **Baseline** GitHub Actions pipeline, deliberately unoptimised, measured over repeated runs (201 s / 250 s, mean ~225 s) | CI stages, fail-fast, secret scoping, measuring before optimising | **DONE** |
 | **6** | **Optimised** pipeline + measured before/after comparison | Caching, parallel jobs, test tiering, artifact reuse — pipeline optimisation with real numbers | pending |
 | **7** | Dockerfile (multi-stage, layer-cached), full Compose stack, small TypeScript client | Containerisation, service discovery, image layering | pending |
 | **8** | AWS: ECR + ECS Fargate deployment guide, then RDS as an upgrade path | Cloud deployment, task definitions, secrets in the cloud | pending |

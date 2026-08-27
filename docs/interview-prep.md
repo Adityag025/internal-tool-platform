@@ -676,3 +676,183 @@ catch-all exception handler was outranking Spring's own resolver and turning
 every client mistake into a 500 — malformed JSON, unknown URL, wrong method,
 wrong content type. That is the kind of bug an in-process test cannot find,
 because it only ever sends requests the application was written to accept."
+
+---
+
+## Phase 5 — Baseline CI pipeline and measurement
+
+### (B) What you can truthfully say you built in this learning project
+
+- A complete GitHub Actions pipeline: checkout, JDK setup, unit/slice tests,
+  Testcontainers integration tests, packaging, CI-derived versioning, starting
+  real dependencies, black-box pytest against a running instance, artifact
+  publishing, Docker image build, and report upload — with any non-zero exit
+  failing the build.
+- A pipeline that **dogfoods the platform**: it registers its own build in the
+  registry it just built, uploads the 55 MB jar, and promotes
+  `DRAFT → PUBLISHED`, so the release gate is exercised on every run.
+- **Secret handling scoped to a single step**, driven by GitHub Actions
+  Secrets, never written to disk or argv, degrading to a skip-with-notice when
+  unconfigured.
+- A **measured baseline over repeated runs** — 201 s and 250 s, mean ~225 s —
+  with a per-step breakdown, rather than a single number or an estimate.
+- Two real bugs the pipeline caught that were invisible locally.
+
+### (C) Still architectural example only
+
+The optimised pipeline (Phase 6) and AWS deployment (Phase 8). Do not claim a
+percentage improvement yet — there isn't one until Phase 6 measures it.
+
+---
+
+### The two bugs, and why they matter
+
+Both are worth telling because they are the honest answer to "what is a
+pipeline actually for?"
+
+**1. `docker compose` interpolates the entire file before applying profiles.**
+`${ARTIFACTORY_MASTER_KEY:?...}` failed `docker compose up postgres`, a service
+that has nothing to do with Artifactory. It worked locally only because a
+`.env` file existed on my machine and not in the repo.
+
+**2. An unanchored `.gitignore` pattern hid the whole test suite's data.**
+`data/` matches a directory of that name at *any* depth. It was meant for the
+local artifact store; it also matched `integration-tests/data/`, so all four
+case files were never committed. The suite was 75/75 green locally against
+files CI could not see. First run: `FileNotFoundError` on every one.
+
+The lesson in one line: **a pipeline's first job is to run your code somewhere
+that is not your machine.** Both bugs were pure environment drift, and neither
+was findable by any test.
+
+---
+
+### 5 beginner questions
+
+1. **What is CI, and what is CD?**
+   Continuous Integration: every commit is automatically built and tested
+   against the mainline, so integration problems surface in minutes rather
+   than at a merge weeks later. Continuous Delivery: every green build
+   produces a deployable artifact. Continuous Deployment goes one step
+   further and releases it automatically.
+
+2. **Why does the pipeline generate the version number?**
+   `github.run_number` is monotonic and unique, so every green build gets
+   coordinates that cannot collide with a previous one. Humans forget to bump
+   versions; CI cannot. It is what makes the registry's immutability rule
+   enforceable instead of aspirational.
+
+3. **What happens when a step fails?**
+   Any non-zero exit code fails the job and every later step is skipped. That
+   is the correct default — a pipeline that continues past a failure is just
+   an expensive log file.
+
+4. **Why upload test reports with `if: always()`?**
+   Because you need the reports most when the run failed, and the default is
+   to skip subsequent steps on failure.
+
+5. **Where do the credentials live?**
+   In GitHub Actions Secrets, injected into the environment of the single step
+   that needs them. Never in a file, never echoed, never as a command-line
+   argument — argv is readable by other processes on the machine.
+
+### 5 intermediate questions
+
+1. **How do you know a pipeline is slow, and where?**
+   You measure it per step, more than once. In this project the intuitive
+   answer would have been "add caching" — but the largest single cost was
+   **85 seconds of fixed `sleep`**, 38% of the run, waiting for services that
+   were ready in about ten. Caching was the second-biggest win, not the first.
+   Measure before optimising, or you optimise the thing you happened to think
+   of.
+
+2. **Why take two baseline samples instead of one?**
+   Because the two runs differed by 49 seconds — a 24% spread on identical
+   input. All of it was in network-bound steps. A single "before" number would
+   have let me quote whatever improvement I liked afterwards. The honest
+   comparison is mean-to-mean on the same runner class.
+
+3. **Your pipeline compiles the application four times. Why is that bad beyond speed?**
+   Time is the least of it. Four builds means four chances to produce
+   *different bytes* — a different transitive dependency resolved, a different
+   base image patch. The artifact you tested is then not provably the artifact
+   you shipped, which quietly invalidates every test result before it. "Build
+   once, deploy everywhere" is a correctness rule, not a performance tip.
+
+4. **How would you implement this in Jenkins, and what actually changes?**
+   The stages map one to one; `withCredentials` replaces `secrets.*`,
+   `stash`/`unstash` replaces artifact upload/download, `parallel` replaces
+   separate jobs. The real difference is the execution model: Jenkins agents
+   are usually long-lived, so the Maven cache is "free" — and that hides
+   state. A stale `~/.m2` on an agent is a classic source of "only fails on
+   the build server". Actions runners are destroyed after every run, so
+   caching is explicit and reproducibility is the default.
+
+5. **Fixed `sleep` versus polling — argue it properly.**
+   A fixed sleep is wrong in both directions simultaneously. Too short and it
+   is flaky; too long and it is wasteful; and on a loaded runner it is both on
+   different days. Polling a readiness endpoint returns as soon as the service
+   is actually ready and fails fast with a real error if it never is. The
+   health endpoint exists precisely to answer "are you ready?" — a sleep
+   ignores it and guesses instead.
+
+### 3 debugging scenarios
+
+1. **"It passes locally and fails in CI."**
+   Assume environment drift before assuming a code bug, and check what the two
+   environments do *not* share: uncommitted files (both of this project's CI
+   bugs were this), environment variables that exist only in your shell,
+   installed tools, and a dirty local build directory. `git status --ignored`
+   and a fresh clone into a temp directory find most of it in a minute.
+
+2. **"CI is flaky — it passes on re-run."**
+   Suspect timing and shared state first. Fixed sleeps that are sometimes long
+   enough, tests that depend on execution order, or two concurrent runs
+   sharing one server. Do not "fix" it with a retry: a retry converts a
+   reproducible bug into an intermittent one you will chase for months.
+
+3. **"The pipeline went from 4 minutes to 20 and nobody changed it."**
+   Nobody changed the pipeline; something it depends on changed. A cache key
+   that no longer matches, so every run is a cold start. A new transitive
+   dependency. A base image that grew. Compare per-step timings against an
+   older run — which requires that you kept the old numbers, which is why they
+   are written down in `docs/ci-cd.md`.
+
+### 30-second explanation
+
+"I built the pipeline twice on purpose. The first version is deliberately
+unoptimised, and I measured it over repeated runs — 201 and 250 seconds — with
+a per-step breakdown. That's the 'before'. The measurement itself was the
+interesting part: 38% of the run was fixed `sleep` statements waiting for
+services that were ready in a fraction of the time, which is not the answer
+I'd have guessed. Phase two of the work fixes them and measures the difference
+on the same commit."
+
+### 2-minute explanation
+
+"The pipeline runs on every push: unit and slice tests, Testcontainers
+integration tests against a real PostgreSQL, packaging, then it starts the
+application it just built and runs the black-box pytest suite against it over
+real HTTP. Then it publishes. The version number comes from the CI run number,
+so every green build gets coordinates that can't collide — which is what makes
+the registry's immutability rule enforceable rather than a convention.
+
+There's a detail I like: the pipeline dogfoods the platform. It registers its
+own build in the registry it just built, uploads the jar, and promotes it from
+DRAFT to PUBLISHED. So if the release gate ever regressed, the pipeline itself
+would be the thing that noticed.
+
+I wrote the baseline deliberately unoptimised, because I wanted a real 'before'
+number rather than a guess. Two runs on the same commit came out at 201 and 250
+seconds — and that 24% spread was itself a finding, because all of it was in
+network-bound steps that caching removes. The biggest single cost wasn't what I
+expected: 85 seconds of fixed sleeps, 38% of the run, waiting for a database
+that was ready in three seconds and an app that was up in eight.
+
+And the pipeline immediately earned its keep by finding two bugs that were
+invisible on my machine. One was a Compose file using the required-variable
+syntax, which fails the whole command even for services you aren't starting.
+The other was an unanchored gitignore pattern — `data/` matched at any depth,
+so the entire data-driven test suite's case files were never committed. The
+suite was green locally against files CI couldn't see. That's the real answer
+to what a pipeline is for: running your code somewhere that isn't your laptop."
