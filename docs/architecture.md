@@ -201,9 +201,37 @@ changes on every restart.
 
 **Published ports are a different thing.** `"5433:5432"` publishes the
 container's 5432 onto the *host's* 5433. That mapping only matters for
-processes on the host. In Phase 1 the app runs on the host, so it correctly
-uses `localhost:5433`. From Phase 7 the app moves into Compose and switches to
-`postgres:5432`.
+processes on the host.
+
+Both modes now exist, and the difference is visible in one environment
+variable:
+
+| How the app runs | `DB_URL` | Why |
+|------------------|----------|-----|
+| On the host (`./mvnw spring-boot:run`) | `jdbc:postgresql://localhost:5433/...` | the host reaches the container through the published port |
+| In Compose (`docker compose up app`) | `jdbc:postgresql://postgres:5432/...` | container to container, over the internal network |
+
+Note the port changes too: **5432, not 5433**. The published mapping is
+irrelevant between containers — they use the container's real port.
+
+`depends_on` alone is also not enough:
+
+```yaml
+depends_on:
+  postgres:
+    condition: service_healthy   # not just "started"
+```
+
+A started container is not a ready database. Without `service_healthy`, Flyway
+races a PostgreSQL that is still coming up.
+
+### One more ownership detail
+
+The image runs as a non-root user (uid 10001). Docker seeds an empty named
+volume from the image's contents *and ownership* at that path, so the artifact
+directory is created and chowned in the Dockerfile **before** `USER app`. Skip
+that and the volume arrives root-owned, and a container that correctly runs as
+non-root cannot write to it.
 
 > Port note for this machine: host 5432 and 8080 were already taken by other
 > containers, so this project uses **5433** (Postgres) and **8081** (app).

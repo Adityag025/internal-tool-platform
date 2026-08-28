@@ -1,0 +1,17 @@
+{
+  "name": "tool-platform-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal TypeScript client for the Internal Tool Distribution Platform",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "serve": "python3 -m http.server 3000",
+    "fetch": "node dist/cli.js"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "24.10.1"
+  }
+}

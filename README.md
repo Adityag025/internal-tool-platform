@@ -25,7 +25,7 @@ and deploy internal tools.
 
 ## Status
 
-Phases 1-6 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
+Phases 1-7 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
@@ -35,7 +35,7 @@ Phases 1-6 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 | 4 | Python data-driven pytest framework | **done** |
 | 5 | Baseline CI pipeline + measurement | **done** |
 | 6 | Optimised CI pipeline + before/after numbers | **done** |
-| 7 | Docker image, full Compose stack, TypeScript client | pending |
+| 7 | Docker image, full Compose stack, TypeScript client | **done** |
 | 8 | AWS (ECR + ECS) | pending |
 | 9 | Observability, security, interview pack | pending |
 
@@ -60,15 +60,37 @@ Host `5432` and `8080` were already occupied by other containers, so:
 
 ## Quick start
 
+### Everything in containers (Phase 7)
+
 ```bash
-# 1. local config
 cp .env.example .env
+npm --prefix frontend install && npm --prefix frontend run build
+docker compose -f docker/docker-compose.yml up -d --wait
+```
 
-# 2. start PostgreSQL
-docker compose -f docker/docker-compose.yml up -d
+| | |
+|---|---|
+| Dashboard | <http://localhost:3000> |
+| API | <http://localhost:8081> |
+| Health | <http://localhost:8081/actuator/health> |
 
-# 3. run the service (Flyway migrates on startup)
+### Or run the service on the host
+
+```bash
+cp .env.example .env
+docker compose -f docker/docker-compose.yml up -d --wait postgres
 cd backend && ./mvnw spring-boot:run
+```
+
+The only difference is one environment variable — `DB_URL` uses
+`postgres:5432` between containers and `localhost:5433` from the host. See
+[`docs/architecture.md`](docs/architecture.md) §7.
+
+### Fetch a tool from the command line
+
+```bash
+node frontend/dist/cli.js --tool data-validator --version 1.2
+node frontend/dist/cli.js --client client-a --tool data-validator   # names NO version
 ```
 
 ```bash
@@ -223,7 +245,8 @@ internal-tool-platform/
 │   ├── data/           JSON/YAML case files - the executable spec
 │   ├── framework/      loader, API client, reusable assertions
 │   └── tests/          one assertion path per behaviour
-├── frontend/           small TypeScript client                 (Phase 7)
+├── frontend/           small TypeScript client
+│   └── src/            api.ts (shared contract), cli.ts, dashboard.ts
 ├── docker/             docker-compose.yml, Dockerfile          (Phase 7)
 ├── .github/workflows/  CI/CD pipeline                          (Phase 5-6)
 ├── scripts/            seed / smoke-test helpers

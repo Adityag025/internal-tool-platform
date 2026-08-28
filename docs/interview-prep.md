@@ -1012,3 +1012,159 @@ evicted, and cold the optimised pipeline actually does more work than the
 baseline because pre-resolving dependencies for the Docker layer is expensive
 to populate and cheap to reuse. That's the number I'd lead with if someone
 asked me to defend it."
+
+---
+
+## Phase 7 — Containerisation and the TypeScript client
+
+### (B) What you can truthfully say you built in this learning project
+
+- A **multi-stage Dockerfile**: JRE runtime rather than JDK, non-root user
+  (uid 10001), exec-form entrypoint, `HEALTHCHECK`, and a dependency layer
+  ordered before the source copy. **673 MB → 376 MB.**
+- A **full Compose stack** — PostgreSQL, the service, and the dashboard —
+  wired by *service name*, with `condition: service_healthy` rather than bare
+  `depends_on`, and a named volume whose ownership is set in the image so a
+  non-root container can write to it.
+- A **small TypeScript client**: one typed `api.ts` shared by a Node CLI and a
+  browser dashboard, under strict compiler settings, with no framework and no
+  bundler.
+- Both clients **re-verify the SHA-256 locally** and refuse the artifact on a
+  mismatch.
+- CORS configured from an allow-list (never `*`), with `exposedHeaders` set so
+  the browser can actually read the artifact headers.
+- The full Python suite passes against the containerised stack: **74 passed**.
+
+### (C) Not verified / still example only
+
+The **dashboard's DOM wiring was not verified in a real browser** — Chrome on
+this machine could not reach any localhost port (a sandboxing issue, not a
+page issue). What *is* verified: it compiles under strict TypeScript, the
+files are served correctly, CORS preflight returns the right headers, and the
+identical `api.ts` it depends on is exercised end to end by the CLI. Say that
+precisely rather than claiming a working UI.
+
+AWS deployment is Phase 8.
+
+### 5 beginner questions
+
+1. **Why is `localhost` wrong between containers?**
+   Inside a container `localhost` is that container's own loopback. There is
+   no database listening there. Use the service name — Docker's embedded DNS
+   resolves it to the container's current IP, which changes on every restart.
+
+2. **Why `postgres:5432` and not `postgres:5433`?**
+   5433 is the *host* mapping. Between containers you use the container's real
+   port on the internal network; the published mapping is irrelevant there.
+
+3. **What does a multi-stage build actually save?**
+   Only the last stage ships. The JDK, the source tree and the populated
+   `~/.m2` stay behind in the build stages. Here: 673 MB → 376 MB.
+
+4. **Why run as a non-root user?**
+   A container escape starts from whatever the process owns. Running as root
+   inside the container means root-adjacent capability if anything goes wrong,
+   for no benefit.
+
+5. **What is CORS protecting?**
+   The browser's same-origin policy. It is a *browser* rule — it stops a
+   malicious page from reading your API's responses with a user's credentials.
+   It is not a network control: curl and the Python suite are unaffected.
+
+### 5 intermediate questions
+
+1. **Why does layer ORDER matter in a Dockerfile?**
+   Docker reuses a layer only if it and every layer before it are unchanged.
+   Dependencies change monthly, source changes hourly — so dependencies must
+   be resolved before the source is copied in. Reverse them and a
+   one-character edit throws away the whole dependency download. That single
+   ordering choice is the difference between a 19-second and a 115-second
+   image build.
+
+2. **`depends_on` was not enough. Why?**
+   Plain `depends_on` waits for the container to *start*, not for the service
+   to be *ready*. A started PostgreSQL still rejects connections while it
+   initialises, and Flyway races it. `condition: service_healthy` waits for
+   the healthcheck the compose file already declared.
+
+3. **You create a directory in the image and immediately mount a volume over it. Why bother?**
+   Because Docker seeds an empty named volume with that path's contents *and
+   ownership* from the image. Create and `chown` it before `USER app` and the
+   volume is app-owned; skip it and the volume arrives root-owned, and a
+   container correctly running as non-root cannot write to it.
+
+4. **Why exec form for `ENTRYPOINT`?**
+   With the shell form the shell is PID 1, it swallows SIGTERM, and the
+   container is eventually SIGKILLed instead of shutting down gracefully —
+   in-flight requests dropped, connections not closed. Exec form makes the JVM
+   PID 1 so it receives the signal directly.
+
+5. **Justify TypeScript on a two-dropdown UI.**
+   Not for the UI — for the contract. `api.ts` is the API expressed as types
+   and is shared by the CLI and the dashboard, so a renamed field breaks the
+   *build* rather than rendering `undefined` to a user or writing a broken
+   file. That is also why there is no React: rendering two dropdowns does not
+   justify hundreds of transitive dependencies, particularly in a project
+   about artifact provenance.
+
+### 3 debugging scenarios
+
+1. **"Connection refused to the database, but the container is running."**
+   Three usual causes, in order: the app is using `localhost` instead of the
+   service name; it is using the host-published port instead of the container
+   port; or it started before the database was ready because `depends_on`
+   lacks `condition: service_healthy`. The startup log prints the JDBC URL —
+   read it before guessing.
+
+2. **"Permission denied writing to a mounted volume."**
+   The container runs as non-root and the volume is root-owned. Either create
+   and chown the directory in the image before switching user, or fix the
+   ownership on the volume. Do *not* "fix" it by running as root.
+
+3. **"The dashboard works from curl but the browser shows nothing."**
+   Open the console first. A CORS failure is invisible in the network tab's
+   status code — the request succeeds and the browser refuses to hand the
+   response to JavaScript. A subtler variant: the request works but a custom
+   header reads as `null`, which means the header arrived but is not in
+   `exposedHeaders`.
+
+### 30-second explanation
+
+"The whole platform runs in Docker Compose — database, service, and a small
+dashboard — wired by service name rather than localhost, with the app waiting
+on the database's healthcheck rather than just its container starting. The
+image is multi-stage: 376 megabytes instead of 673, JRE not JDK, non-root. The
+client is deliberately small TypeScript: one typed API module shared by a CLI
+and a browser page, and both re-verify the SHA-256 locally before trusting the
+bytes."
+
+### 2-minute explanation
+
+"Phase 7 is the packaging phase. The Dockerfile is multi-stage, and the design
+turns on one idea: order layers by how often they change. Dependencies get
+resolved in an early layer, source is copied in last, so an ordinary code edit
+reuses the cached dependency layer. That one ordering decision is the
+difference between a nineteen-second image build and a hundred-and-fifteen
+second one. The final stage is a JRE with just the jar — 376 megabytes against
+673 for the naive version — running as a non-root user with an exec-form
+entrypoint so the JVM gets SIGTERM directly instead of a shell swallowing it.
+
+The Compose stack demonstrates the networking rule people get wrong: between
+containers you use the service name and the container's own port, because
+`localhost` inside a container is that container's loopback and the published
+host port is irrelevant on the internal network. The app also waits on the
+database's healthcheck rather than just its container starting — a started
+PostgreSQL still rejects connections while it initialises.
+
+One detail I like: the image runs as non-root, and Docker seeds an empty named
+volume from the image's contents *and ownership*. So the artifact directory is
+created and chowned in the Dockerfile before switching user. Miss that and the
+volume arrives root-owned and the container can't write to it.
+
+The client is intentionally minimal. There's one typed api.ts shared by a Node
+CLI and a browser dashboard, which is the actual reason TypeScript is there:
+the API contract is checked at compile time, so a renamed field breaks the
+build instead of rendering undefined to a user. No React — two dropdowns don't
+justify the dependency tree. Both clients recompute the SHA-256 of what they
+downloaded and refuse it on a mismatch, because verifying the content isn't
+the same as trusting the transport."

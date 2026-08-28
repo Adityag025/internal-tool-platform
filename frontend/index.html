@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tool Distribution Platform</title>
+  <style>
+    :root { color-scheme: light dark; --fg: #1a1a1a; --bg: #fff; --muted: #666;
+            --line: #ddd; --ok: #0a7c3f; --err: #b3261e; }
+    @media (prefers-color-scheme: dark) {
+      :root { --fg: #e6e6e6; --bg: #16181c; --muted: #9aa0a6; --line: #33373d;
+              --ok: #5dd48f; --err: #f2857c; }
+    }
+    * { box-sizing: border-box; }
+    body { font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
+           color: var(--fg); background: var(--bg); margin: 0;
+           padding: 2.5rem 1.25rem; }
+    main { max-width: 46rem; margin: 0 auto; }
+    h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+    p.sub { color: var(--muted); margin: 0 0 2rem; }
+    .step { border: 1px solid var(--line); border-radius: 8px;
+            padding: 1rem 1.15rem; margin-bottom: 1rem; }
+    .step h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--muted); margin: 0 0 .6rem; font-weight: 600; }
+    select, button { font: inherit; padding: .5rem .65rem; width: 100%;
+                     border: 1px solid var(--line); border-radius: 6px;
+                     background: var(--bg); color: var(--fg); }
+    button { cursor: pointer; font-weight: 600; }
+    button:disabled, select:disabled { opacity: .45; cursor: not-allowed; }
+    .output { margin-top: 1.25rem; border: 1px solid var(--line);
+              border-left-width: 3px; border-radius: 6px; padding: .9rem 1.1rem;
+              font-size: .9rem; }
+    .output.ok  { border-left-color: var(--ok); }
+    .output.err { border-left-color: var(--err); }
+    table { border-collapse: collapse; margin-top: .6rem; width: 100%; }
+    td { padding: .2rem .5rem .2rem 0; vertical-align: top; }
+    td:first-child { color: var(--muted); white-space: nowrap; width: 8.5rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+           font-size: .86em; word-break: break-all; }
+    footer { margin-top: 2rem; color: var(--muted); font-size: .82rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Internal Tool Distribution Platform</h1>
+    <p class="sub">Request an exact version of an internal tool.</p>
+
+    <div class="step">
+      <h2>1 &middot; Tool</h2>
+      <select id="tool"><option value="">loading...</option></select>
+    </div>
+
+    <div class="step">
+      <h2>2 &middot; Version</h2>
+      <select id="version" disabled><option value="">select a tool first</option></select>
+    </div>
+
+    <div class="step">
+      <h2>3 &middot; Request</h2>
+      <button id="request" disabled>Download this exact version</button>
+    </div>
+
+    <div id="output" class="output">loading tools...</div>
+
+    <footer>
+      The checksum is recomputed in the browser and compared with the server's.
+      Point at another instance with <code>?api=http://host:8081</code>.
+    </footer>
+  </main>
+
+  <script type="module" src="./dist/dashboard.js"></script>
+</body>
+</html>

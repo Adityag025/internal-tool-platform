@@ -32,6 +32,11 @@ spring:
 
 # ---------------------------------------------------------------- platform
 platform:
+  # Origins allowed to call this API from a browser. Empty = CORS off, which
+  # is the right default for a service with no browser client. Never "*".
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+
   artifacts:
     # filesystem | artifactory. Local dev and CI use filesystem so neither
     # needs a running Artifactory; the artifactory profile exercises the real

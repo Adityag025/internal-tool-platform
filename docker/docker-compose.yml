@@ -31,6 +31,76 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    # Survives a host reboot. Without it the database silently stays down and
+    # the next thing you run fails with "connection refused" for no visible
+    # reason - which happened on this machine between two work sessions.
+    restart: unless-stopped
+    networks:
+      - platform-net
+
+  # ---------------------------------------------------------------------
+  # The Tool Registry service itself.
+  #
+  # CONTAINER NETWORKING - the single most important line in this file:
+  #
+  #     jdbc:postgresql://postgres:5432/toolplatform
+  #                       ^^^^^^^^ ^^^^
+  #                       service   the CONTAINER's port, not the host's
+  #                       name
+  #
+  # NOT localhost:5433. Inside a container, `localhost` is that container's own
+  # loopback interface - there is no PostgreSQL listening there, so the
+  # connection is refused. Docker's embedded DNS resolves the service name
+  # `postgres` to the container's current IP, which is essential because that
+  # IP changes on every restart.
+  #
+  # And 5432, not 5433: the 5433 mapping publishes the port to the HOST. It is
+  # irrelevant between containers, which talk on the internal network using the
+  # container's real port.
+  # ---------------------------------------------------------------------
+  app:
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile
+    container_name: tool-platform-app
+    depends_on:
+      postgres:
+        # Not just "started" - wait until pg_isready passes. A started
+        # container is not a ready database, and Flyway will fail on a
+        # PostgreSQL that is still coming up.
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/toolplatform
+      DB_USERNAME: ${POSTGRES_USER:-toolplatform}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
+      SERVER_PORT: 8081
+      ARTIFACT_ROOT: /var/lib/tool-platform/artifacts
+      CORS_ALLOWED_ORIGINS: http://localhost:${FRONTEND_HOST_PORT:-3000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${APP_HOST_PORT:-8081}:8081"
+    volumes:
+      - artifact-data:/var/lib/tool-platform/artifacts
+    restart: unless-stopped
+    networks:
+      - platform-net
+
+  # ---------------------------------------------------------------------
+  # The small TypeScript dashboard, served as static files.
+  # Run `npm --prefix ../frontend run build` first.
+  # ---------------------------------------------------------------------
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: tool-platform-frontend
+    depends_on:
+      - app
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:80"
+    volumes:
+      # Read-only: the container never needs to modify what it serves.
+      - ../frontend/index.html:/usr/share/nginx/html/index.html:ro
+      - ../frontend/dist:/usr/share/nginx/html/dist:ro
+    restart: unless-stopped
     networks:
       - platform-net
 
@@ -81,6 +151,7 @@ services:
 
 volumes:
   postgres-data:
+  artifact-data:
   artifactory-data:
 
 networks:

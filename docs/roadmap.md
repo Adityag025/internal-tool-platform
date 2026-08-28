@@ -11,7 +11,7 @@ starts until the previous phase has been demonstrated working.
 | **4** | Python pytest data-driven framework: JSON/YAML case files, reusable fixtures + assertions, run-scoped isolation, negative/edge cases, JUnit + HTML reports | Data-driven testing, black-box API testing, test data as executable specification | **DONE** |
 | **5** | **Baseline** GitHub Actions pipeline, deliberately unoptimised, measured over repeated runs (201 s / 250 s, mean ~225 s) | CI stages, fail-fast, secret scoping, measuring before optimising | **DONE** |
 | **6** | **Optimised** pipeline + measured before/after comparison | Caching, parallel jobs, test tiering, artifact reuse — pipeline optimisation with real numbers | pending |
-| **7** | Dockerfile (multi-stage, layer-cached), full Compose stack, small TypeScript client | Containerisation, service discovery, image layering | pending |
+| **7** | Multi-stage Dockerfile (673 MB → 376 MB, non-root), full Compose stack wired by service name, small TypeScript CLI + dashboard sharing one typed API contract | Containerisation, service discovery, image layering, volume ownership, CORS | **DONE** |
 | **8** | AWS: ECR + ECS Fargate deployment guide, then RDS as an upgrade path | Cloud deployment, task definitions, secrets in the cloud | pending |
 | **9** | Observability, security hardening, full interview pack, resume mapping | Release engineering as a discipline | pending |
 

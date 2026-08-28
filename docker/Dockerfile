@@ -40,6 +40,14 @@ RUN groupadd --system --gid 10001 app \
 
 WORKDIR /app
 COPY --from=build --chown=app:app /build/target/tool-registry.jar app.jar
+
+# Create the artifact directory in the IMAGE, owned by the app user.
+# When Docker mounts a named volume over a path that already exists in the
+# image, it seeds the empty volume with that path's contents AND ownership.
+# Skip this and the volume arrives root-owned, and a container that correctly
+# runs as non-root cannot write to it.
+RUN mkdir -p /var/lib/tool-platform/artifacts && chown -R app:app /var/lib/tool-platform
+
 USER app
 
 EXPOSE 8081
