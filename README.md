@@ -25,7 +25,7 @@ and deploy internal tools.
 
 ## Status
 
-Phases 1-7 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
+Phases 1-8 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
@@ -36,7 +36,7 @@ Phases 1-7 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 | 5 | Baseline CI pipeline + measurement | **done** |
 | 6 | Optimised CI pipeline + before/after numbers | **done** |
 | 7 | Docker image, full Compose stack, TypeScript client | **done** |
-| 8 | AWS (ECR + ECS) | pending |
+| 8 | AWS (ECR + ECS) — written, not provisioned | **done** |
 | 9 | Observability, security, interview pack | pending |
 
 ## Tech stack
@@ -248,7 +248,8 @@ internal-tool-platform/
 ├── frontend/           small TypeScript client
 │   └── src/            api.ts (shared contract), cli.ts, dashboard.ts
 ├── docker/             docker-compose.yml, Dockerfile          (Phase 7)
-├── .github/workflows/  CI/CD pipeline                          (Phase 5-6)
+├── .github/workflows/  baseline CI, optimised CI, AWS deploy
+├── deploy/aws/         ECS task definition, IAM policies, deploy script
 ├── scripts/            seed / smoke-test helpers
 └── docs/               architecture, roadmap, interview prep
 ```
@@ -257,6 +258,7 @@ internal-tool-platform/
 
 - [`docs/architecture.md`](docs/architecture.md) — components, both flows, data model, container networking, secret management
 - [`docs/roadmap.md`](docs/roadmap.md) — the nine phases and why they are in that order
+- [`docs/aws-deployment.md`](docs/aws-deployment.md) — EC2 vs Fargate, immutable task revisions, OIDC instead of stored keys, RDS, **real costs and teardown**
 - [`docs/ci-cd.md`](docs/ci-cd.md) — every pipeline stage explained, secret scoping, the measured baseline, and the same pipeline in Jenkins
 - [`docs/testing.md`](docs/testing.md) — the three test tiers, why data-driven beats duplicated methods, fixtures and run isolation
 - [`docs/artifactory.md`](docs/artifactory.md) — artifact repositories, coordinates, immutability, checksums, promotion, and the port/adapter split

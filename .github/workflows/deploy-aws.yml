@@ -1,0 +1,165 @@
+# =============================================================================
+# Continuous Deployment to ECS Fargate.
+#
+# Runs only when AWS is actually configured (see the guard in the first job),
+# so the repository stays green for anyone who clones it without an AWS
+# account. Deployment is opt-in: pushing to main does not deploy, tagging a
+# release does.
+#
+# NO LONG-LIVED AWS KEYS. Authentication is OIDC: GitHub presents a
+# short-lived token, AWS verifies it against the trust policy and hands back
+# temporary credentials. There is no AWS_SECRET_ACCESS_KEY stored in this
+# repository to leak, rotate, or find in a git history.
+# =============================================================================
+
+name: Deploy to AWS
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy, e.g. 0.1.42 (must already exist in ECR, or will be built)'
+        required: true
+  push:
+    tags: ['v*']
+
+# Requesting the OIDC token requires this permission explicitly.
+permissions:
+  id-token: write        # mint the OIDC token
+  contents: read         # checkout
+
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false   # never cancel a deploy midway
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  ECR_REPOSITORY: tool-registry
+  ECS_CLUSTER: tool-platform
+  ECS_SERVICE: tool-registry
+
+jobs:
+  # Deployment is skipped, not failed, when AWS is not configured. A red X on
+  # every push would train people to ignore red Xs.
+  check-configured:
+    name: Is AWS configured?
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        run: |
+          if [ -n "${{ secrets.AWS_DEPLOY_ROLE_ARN }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AWS_DEPLOY_ROLE_ARN is not set - skipping deployment. See docs/aws-deployment.md."
+          fi
+
+  deploy:
+    name: Build, push and deploy
+    runs-on: ubuntu-latest
+    needs: check-configured
+    if: needs.check-configured.outputs.configured == 'true'
+    timeout-minutes: 30
+
+    # A GitHub Environment adds an approval gate and records a deployment
+    # history. Production deploys should be a decision, not a side effect of
+    # a merge.
+    environment:
+      name: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"       # tag v0.1.42 -> 0.1.42
+          fi
+          echo "value=$V" >> "$GITHUB_OUTPUT"
+          echo "deploying version $V"
+
+      # Exchanges the OIDC token for temporary AWS credentials. They expire in
+      # an hour and are scoped by the role's trust policy to this repository
+      # and this branch.
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-${{ github.run_id }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - uses: docker/setup-buildx-action@v3
+
+      # linux/amd64 explicitly: Fargate runs x86 unless the task definition
+      # asks for ARM, and an image built on an ARM runner would fail at
+      # start-up with "exec format error".
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Render the task definition
+        id: render
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          sed -e "s|ACCOUNT_ID|${ACCOUNT_ID}|g" \
+              -e "s|REGION|${AWS_REGION}|g" \
+              -e "s|:VERSION|:${{ steps.version.outputs.value }}|g" \
+              deploy/aws/task-definition.json > /tmp/task-definition.json
+          echo "path=/tmp/task-definition.json" >> "$GITHUB_OUTPUT"
+
+      - name: Register the task definition
+        id: taskdef
+        run: |
+          REVISION=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "registered $REVISION"
+
+      - name: Deploy
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "${{ steps.taskdef.outputs.arn }}" >/dev/null
+
+      # Blocks until the new tasks pass their health checks and the old ones
+      # drain. Without it the job goes green while the new version is
+      # crash-looping, and "deployed successfully" means nothing.
+      - name: Wait for the rollout to stabilise
+        run: aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+
+      - name: Smoke test the deployed service
+        if: vars.PUBLIC_BASE_URL != ''
+        run: ./scripts/wait-for-http.sh "${{ vars.PUBLIC_BASE_URL }}/actuator/health" 120
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed \`${{ steps.version.outputs.value }}\` :rocket:"
+            echo ""
+            echo "- task definition: \`${{ steps.taskdef.outputs.arn }}\`"
+            echo "- cluster/service: \`$ECS_CLUSTER/$ECS_SERVICE\`"
+            echo ""
+            echo "Roll back by pointing the service at an earlier revision:"
+            echo '```'
+            echo "aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE \\"
+            echo "  --task-definition tool-registry:<previous-revision>"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

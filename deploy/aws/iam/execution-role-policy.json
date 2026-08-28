@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadOnlyThisServicesSecrets",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameters"],
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/tool-registry/*"
+    },
+    {
+      "Sid": "DecryptThoseParameters",
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt"],
+      "Resource": "arn:aws:kms:REGION:ACCOUNT_ID:key/KMS_KEY_ID",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "ssm.REGION.amazonaws.com" }
+      }
+    }
+  ]
+}

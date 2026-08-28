@@ -1168,3 +1168,166 @@ build instead of rendering undefined to a user. No React — two dropdowns don't
 justify the dependency tree. Both clients recompute the SHA-256 of what they
 downloaded and refuse it on a mismatch, because verifying the content isn't
 the same as trusting the transport."
+
+---
+
+## Phase 8 — AWS deployment
+
+### (B) What you can truthfully say you built in this learning project
+
+- An **ECS Fargate task definition** with the execution/task role split,
+  secrets injected from SSM by ARN, a readiness-based health check with a
+  start-up grace period, and awslogs.
+- **IAM policies scoped to single resources** — push to one ECR repository,
+  update one ECS service, `iam:PassRole` limited to exactly two roles with an
+  `iam:PassedToService` condition.
+- **OIDC authentication from GitHub Actions**, so no long-lived AWS keys exist
+  anywhere, with the trust policy pinned to `refs/heads/main`.
+- An **idempotent deploy script** that refuses to overwrite an existing
+  immutable tag and blocks on `ecs wait services-stable` rather than
+  declaring success while the new version crash-loops.
+- A written comparison of EC2 / App Runner / Fargate / EKS with **real monthly
+  costs**, a teardown checklist, and the RDS migration path.
+
+### (C) NOT done — say this plainly
+
+**None of it has been applied to an AWS account.** No cluster, no service, no
+RDS instance exists. There are no AWS credentials on the machine this was
+built on.
+
+The honest sentence:
+
+> "I wrote the ECS deployment — task definition, IAM roles, an
+> OIDC-authenticated pipeline — and I can walk you through every decision in
+> it. I did not provision it, because it bills a real account."
+
+That is a **stronger** answer than a vague "deployed to AWS", because it
+survives the follow-up question. Someone who actually ran it can tell you what
+`CannotPullContainerError` means at 2am; if you cannot, do not imply you can.
+
+### 5 beginner questions
+
+1. **What is ECR?** A private Docker registry in your AWS account. Same idea
+   as Docker Hub, but access is controlled by IAM.
+
+2. **What is a task definition?** The blueprint for running a container:
+   image, CPU/memory, environment, secrets, ports, logging, health check.
+   Registering one creates a new **immutable revision**.
+
+3. **Fargate vs EC2 launch type?** With EC2 you run and patch the container
+   host yourself. With Fargate AWS runs it; you specify CPU and memory and
+   never see a server. Fargate costs more per unit of compute and less in
+   attention.
+
+4. **Where do the database credentials live?** In SSM Parameter Store as a
+   `SecureString`. The task definition contains only the *ARN*; the ECS agent
+   fetches the value at start-up. It is never in git, never in the task
+   definition, never in `describe-task-definition` output.
+
+5. **Why not `:latest` in a task definition?** Because a tag that moves cannot
+   be rolled back to. Deploying `:latest` means you cannot say which bytes are
+   running, and a rollback restores a tag whose meaning has already changed.
+
+### 5 intermediate questions
+
+1. **Explain the execution role vs the task role.**
+   The execution role belongs to the **ECS agent** — pull the image, write
+   logs, read secrets — and is used before your code runs. The task role
+   belongs to **your application**, for AWS APIs it calls itself. This app
+   calls none, so its task role is empty, which is the correct answer rather
+   than a gap. Conflating them is how you end up granting an application the
+   ability to read every secret in the account.
+
+2. **How does GitHub Actions authenticate without stored AWS keys?**
+   OIDC. Actions mints a short-lived signed token describing the repository,
+   branch and workflow; AWS validates it against a trust policy and returns
+   temporary credentials that expire in an hour. Nothing long-lived exists to
+   leak. The trust policy's `sub` condition is pinned to `refs/heads/main` —
+   `repo:owner/*` would let any repository you own assume the role.
+
+3. **How do you roll back an ECS deployment?**
+   Point the service at an earlier task definition revision. Revision 41 still
+   exists and still references an immutable ECR digest, so it is byte-for-byte
+   what was tested. No rebuild. This is structurally identical to re-pinning a
+   client to an earlier tool version — a pointer moves, nothing is rebuilt.
+
+4. **Your Fargate task stores artifacts on a task volume. What breaks?**
+   Fargate task storage dies with the task, so every artifact vanishes on the
+   next deploy. It is a deliberate simplification for a demo. The fix is a
+   configuration change, not code: `ARTIFACT_STORE=artifactory` uses the
+   adapter that already exists. Or add an S3 adapter — about eighty lines,
+   plus `s3:GetObject`/`PutObject` on the *task* role. That is what the
+   port/adapter split in Phase 3 was for.
+
+5. **What is the most expensive thing people accidentally leave running?**
+   A NAT gateway, ~$32/month, billed hourly whether or not traffic flows, and
+   not deleted when you delete the service in front of it. Then load
+   balancers at ~$18. For a learning deployment: one task in a public subnet
+   with `assignPublicIp=ENABLED`, no ALB, no NAT — about $9/month. And set a
+   budget alarm *first*: the usual way a learning project goes wrong on AWS is
+   not technical, it is a resource left running for three months.
+
+### 3 debugging scenarios
+
+1. **"The task starts, then stops, with `CannotPullContainerError`."**
+   It cannot reach ECR. In a public subnet that almost always means
+   `assignPublicIp` is `DISABLED`; in a private subnet it means there is no
+   NAT gateway or no VPC endpoint for ECR. Check the execution role has ECR
+   pull permission too — that error surfaces before your application ever runs,
+   which is the clue that it is the *agent* failing, not your code.
+
+2. **"The task keeps restarting but the logs look fine."**
+   The health check is failing, or the grace period is too short. A JVM plus
+   Flyway migrations can take 60–90 seconds; if
+   `--health-check-grace-period-seconds` is 30, ECS kills the task before it
+   finishes starting and you get a crash loop that looks exactly like an
+   application bug. Check the *stopped reason* on the task, not just the logs.
+
+3. **"It works locally and the deployed container exits immediately with `exec format error`."**
+   Architecture mismatch — an ARM image on x86 Fargate, or the reverse. Build
+   with an explicit `--platform linux/amd64`, which is why the deploy workflow
+   pins it rather than relying on the runner's default.
+
+### 30-second explanation
+
+"It deploys to ECS Fargate. GitHub Actions authenticates to AWS over OIDC — no
+stored keys — builds the image, pushes it to ECR with immutable tags, registers
+a new task definition revision, and waits for the rollout to stabilise before
+reporting success. Rolling back is pointing the service at an earlier revision,
+which is the same immutability idea the registry uses for tool versions. I
+wrote and validated all of it; I haven't provisioned it, because it bills a
+real account."
+
+### 2-minute explanation
+
+"I compared four options — EC2, App Runner, Fargate and EKS — and the honest
+answer is two answers. To just see it running on AWS, one EC2 free-tier
+instance running the same compose stack is twenty minutes and zero dollars.
+To learn what job descriptions ask for, ECS Fargate, and that is what the
+committed files implement.
+
+The reason Fargate fits this project specifically is that a task definition
+revision is an immutable versioned artifact. Registering a new one never
+mutates an old one, so a rollback is pointing the service at revision 41 —
+which still references an immutable ECR digest, so it is byte-for-byte what
+was tested. No rebuild. That is exactly the discipline the registry enforces
+for tool versions, one layer up the stack, and ECR tag immutability enforces
+the same rule for images.
+
+Two things I'd point at in the IAM. First, the execution role and the task
+role are separate: the execution role belongs to the ECS agent for pulling the
+image and reading secrets, the task role belongs to my application. My app
+calls no AWS APIs, so its task role is empty — least privilege means an empty
+policy when nothing is needed. Second, the pipeline authenticates over OIDC,
+so there is no AWS secret key stored in the repository at all, and the trust
+policy is pinned to main so a fork's pull request cannot deploy.
+
+I also wrote down what it costs, because that is the part learning projects
+skip: about nine dollars a month for one task, plus eighteen for a load
+balancer and thirty-two for a NAT gateway if you add them without noticing.
+And a teardown checklist, because the usual way this goes wrong is not
+technical.
+
+What I did *not* do is provision any of it. There is no cluster and no RDS
+instance. I'd rather say that than imply I've debugged a production ECS
+rollout at 2am."
