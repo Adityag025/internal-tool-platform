@@ -6,6 +6,7 @@ import com.acme.toolplatform.domain.Tool;
 import com.acme.toolplatform.domain.ToolVersion;
 import com.acme.toolplatform.domain.VersionSelector;
 import com.acme.toolplatform.domain.VersionStatus;
+import com.acme.toolplatform.observability.PlatformMetrics;
 import com.acme.toolplatform.repository.ClientRepository;
 import com.acme.toolplatform.repository.ClientToolConfigurationRepository;
 import com.acme.toolplatform.service.exception.DuplicateResourceException;
@@ -36,13 +37,16 @@ public class ClientConfigurationService {
     private final ClientRepository clientRepository;
     private final ClientToolConfigurationRepository configRepository;
     private final ToolRegistryService registry;
+    private final PlatformMetrics metrics;
 
     public ClientConfigurationService(ClientRepository clientRepository,
                                       ClientToolConfigurationRepository configRepository,
-                                      ToolRegistryService registry) {
+                                      ToolRegistryService registry,
+                                      PlatformMetrics metrics) {
         this.clientRepository = clientRepository;
         this.configRepository = configRepository;
         this.registry = registry;
+        this.metrics = metrics;
     }
 
     // ---------------------------------------------------------------- clients
@@ -150,10 +154,15 @@ public class ClientConfigurationService {
         };
 
         if (version.getStatus() == VersionStatus.REVOKED) {
+            metrics.versionResolved(toolName, config.getSelector().name(),
+                    PlatformMetrics.Outcome.REVOKED);
             throw new VersionRevokedException(
                     "Version '" + version.getVersion() + "' of tool '" + toolName
                             + "' has been REVOKED and must not be used; pin this client to another version");
         }
+
+        metrics.versionResolved(toolName, config.getSelector().name(),
+                PlatformMetrics.Outcome.SUCCESS);
 
         long millis = (System.nanoTime() - startNanos) / 1_000_000;
         // Even for LATEST the CONCRETE version is logged - so months later you

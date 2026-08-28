@@ -8,6 +8,7 @@ ones people skip when each one costs a new function.
 import pytest
 
 from framework.assertions import assert_problem, assert_status
+from framework.client import ToolPlatformClient
 from framework.loader import parametrized
 
 pytestmark = pytest.mark.negative
@@ -112,22 +113,43 @@ def test_wrong_method_is_405(api, tool):
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Authentication is not implemented yet - it is Phase 9 (security hardening). "
-        "The test is written now, and deliberately left visible in the report as a "
-        "known gap rather than deleted. A missing test looks identical to a passing "
-        "one; an xfail does not."
-    ),
-    strict=False,
-)
-def test_unauthenticated_write_is_rejected(api, tool):
-    """Publishing should require credentials. Today it does not."""
-    response = api.post(
-        f"/api/v1/tools/{tool}/versions",
-        json={"version": "8.8", "artifactPath": f"{tool}/8.8/{tool}-8.8.jar"},
-        headers={"Authorization": ""},
+def test_unauthenticated_write_is_rejected(api, auth_enabled, base_url, tool):
+    """Publishing requires a credential.
+
+    This was an `xfail` through Phases 4-8, carrying the reason "authentication
+    is not implemented yet - it is Phase 9". It is now a real test, and it
+    passes. That is the point of writing a test for a known gap rather than
+    deleting it: the day the gap closes, the test tells you.
+    """
+    if not auth_enabled:
+        pytest.skip(
+            "This platform is running without an API key, so writes are "
+            "intentionally open. Start it with API_KEY=<secret> to exercise "
+            "authentication, and the suite will assert on it."
+        )
+
+    # A client with NO credential, regardless of what the suite was given.
+    anonymous = ToolPlatformClient(base_url)
+
+    response = anonymous.publish_version(tool, "8.8")
+
+    body = assert_problem(response, 401, "unauthorized")
+    assert "X-API-Key" in str(body.get("detail", "")), (
+        "A 401 should tell a well-behaved client HOW to authenticate"
     )
-    assert response.status_code in (401, 403), (
-        f"An unauthenticated write must be rejected, got {response.status_code}"
+    assert "ApiKey" in response.headers.get("WWW-Authenticate", ""), (
+        "RFC 7235 requires WWW-Authenticate on a 401"
     )
+
+
+def test_reads_stay_public_even_with_authentication_on(api, auth_enabled, base_url, tool):
+    """Reads are open by policy, not by accident.
+
+    Every consumer needs to list versions constantly; requiring a credential
+    for that would push teams into sharing one.
+    """
+    if not auth_enabled:
+        pytest.skip("authentication is not enabled on this platform")
+
+    anonymous = ToolPlatformClient(base_url)
+    assert_status(anonymous.list_versions(tool), 200)

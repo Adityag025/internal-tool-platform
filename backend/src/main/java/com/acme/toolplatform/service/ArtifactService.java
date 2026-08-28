@@ -5,11 +5,13 @@ import com.acme.toolplatform.artifact.ArtifactStore;
 import com.acme.toolplatform.artifact.ArtifactStoreProperties;
 import com.acme.toolplatform.artifact.StoredArtifact;
 import com.acme.toolplatform.domain.ToolVersion;
+import com.acme.toolplatform.observability.PlatformMetrics;
 import com.acme.toolplatform.domain.VersionStatus;
 import com.acme.toolplatform.repository.ToolVersionRepository;
 import com.acme.toolplatform.service.exception.ChecksumMismatchException;
 import com.acme.toolplatform.service.exception.DuplicateResourceException;
 import com.acme.toolplatform.service.exception.VersionRevokedException;
+import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -29,17 +31,20 @@ public class ArtifactService {
     private final ClientConfigurationService clients;
     private final ToolVersionRepository versionRepository;
     private final ArtifactStoreProperties properties;
+    private final PlatformMetrics metrics;
 
     public ArtifactService(ArtifactStore store,
                            ToolRegistryService registry,
                            ClientConfigurationService clients,
                            ToolVersionRepository versionRepository,
-                           ArtifactStoreProperties properties) {
+                           ArtifactStoreProperties properties,
+                           PlatformMetrics metrics) {
         this.store = store;
         this.registry = registry;
         this.clients = clients;
         this.versionRepository = versionRepository;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     /**
@@ -74,6 +79,7 @@ public class ArtifactService {
         version.sealWith(stored.sha256());
         versionRepository.save(version);
 
+        metrics.versionPublished(toolName);
         log.info("artifact.uploaded tool={} version={} path={} bytes={} sha256={}",
                 toolName, version.getVersion(), stored.path(), stored.sizeBytes(), stored.sha256());
         return version;
@@ -106,6 +112,8 @@ public class ArtifactService {
         long startNanos = System.nanoTime();
 
         if (version.getStatus() == VersionStatus.REVOKED) {
+            metrics.artifactDownloaded(toolName, PlatformMetrics.Outcome.REVOKED,
+                    Duration.ofNanos(System.nanoTime() - startNanos), 0);
             throw new VersionRevokedException(
                     "Version '" + version.getVersion() + "' of '" + toolName
                             + "' has been REVOKED and must not be downloaded");
@@ -118,13 +126,19 @@ public class ArtifactService {
         // corrupted or tampered with, and serving them anyway would defeat
         // the entire point of recording a checksum.
         if (version.hasArtifact() && !version.getChecksumSha256().equalsIgnoreCase(content.sha256())) {
+            metrics.checksumMismatch(toolName);
+            metrics.artifactDownloaded(toolName, PlatformMetrics.Outcome.CHECKSUM_MISMATCH,
+                    Duration.ofNanos(System.nanoTime() - startNanos), 0);
             throw new ChecksumMismatchException(
                     "Checksum mismatch for " + version.getArtifactPath()
                             + ": registry recorded " + version.getChecksumSha256()
                             + " but the store returned " + content.sha256());
         }
 
-        long millis = (System.nanoTime() - startNanos) / 1_000_000;
+        Duration took = Duration.ofNanos(System.nanoTime() - startNanos);
+        metrics.artifactDownloaded(toolName, PlatformMetrics.Outcome.SUCCESS, took, content.sizeBytes());
+
+        long millis = took.toMillis();
         log.info("artifact.downloaded tool={} version={} path={} bytes={} verified={} latencyMs={}",
                 toolName, version.getVersion(), version.getArtifactPath(),
                 content.sizeBytes(), version.hasArtifact(), millis);

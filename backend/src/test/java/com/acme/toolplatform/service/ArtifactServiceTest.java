@@ -17,10 +17,12 @@ import com.acme.toolplatform.domain.SemanticVersion;
 import com.acme.toolplatform.domain.Tool;
 import com.acme.toolplatform.domain.ToolVersion;
 import com.acme.toolplatform.domain.VersionStatus;
+import com.acme.toolplatform.observability.PlatformMetrics;
 import com.acme.toolplatform.repository.ToolVersionRepository;
 import com.acme.toolplatform.service.exception.ChecksumMismatchException;
 import com.acme.toolplatform.service.exception.DuplicateResourceException;
 import com.acme.toolplatform.service.exception.VersionRevokedException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -44,10 +46,15 @@ class ArtifactServiceTest {
 
     ArtifactService service;
     Tool tool;
+    // A REAL in-memory registry rather than a mock: metrics then behave
+    // exactly as in production and can be asserted on, which a mock cannot do.
+    SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
-        service = new ArtifactService(store, registry, clients, versionRepository, new ArtifactStoreProperties());
+        meterRegistry = new SimpleMeterRegistry();
+        service = new ArtifactService(store, registry, clients, versionRepository,
+                new ArtifactStoreProperties(), new PlatformMetrics(meterRegistry));
         tool = new Tool(TOOL, null);
     }
 
@@ -128,6 +135,11 @@ class ArtifactServiceTest {
         assertThatThrownBy(() -> service.download(TOOL, "1.2"))
                 .isInstanceOf(ChecksumMismatchException.class)
                 .hasMessageContaining("registry recorded");
+
+        // A checksum mismatch gets its own counter because it should page
+        // someone - the correct alert threshold for it is "greater than zero".
+        assertThat(meterRegistry.counter("toolplatform.artifact.checksum.mismatch", "tool", TOOL).count())
+                .isEqualTo(1.0);
     }
 
     @Test

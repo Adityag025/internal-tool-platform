@@ -50,6 +50,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=os.environ.get("BASE_URL", "http://localhost:8081"),
         help="Base URL of the Tool Registry service",
     )
+    parser.addoption(
+        "--api-key",
+        action="store",
+        default=os.environ.get("API_KEY", ""),
+        help="API key for write operations (matches platform.security.api-key)",
+    )
 
 
 # ------------------------------------------------------------------ session
@@ -67,8 +73,33 @@ def run_id() -> str:
 
 
 @pytest.fixture(scope="session")
-def api(base_url: str) -> ToolPlatformClient:
-    return ToolPlatformClient(base_url)
+def api_key(pytestconfig: pytest.Config) -> str:
+    return pytestconfig.getoption("--api-key")
+
+
+@pytest.fixture(scope="session")
+def api(base_url: str, api_key: str) -> ToolPlatformClient:
+    return ToolPlatformClient(base_url, api_key=api_key or None)
+
+
+@pytest.fixture(scope="session")
+def auth_enabled(base_url: str) -> bool:
+    """Does this platform actually enforce authentication on writes?
+
+    DETECTED, not assumed from configuration. The suite may hold a key while
+    the platform has auth switched off, or the reverse; only the platform's
+    own response settles it.
+
+    The probe is deliberately side-effect free: the body is invalid either
+    way, so a platform WITHOUT auth answers 422 (validation ran) and one WITH
+    auth answers 401 (rejected before validation). Neither creates anything.
+    """
+    probe = requests.post(
+        f"{base_url.rstrip('/')}/api/v1/tools",
+        json={"name": ""},
+        timeout=10,
+    )
+    return probe.status_code == 401
 
 
 @pytest.fixture(scope="session", autouse=True)

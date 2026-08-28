@@ -15,10 +15,12 @@ import com.acme.toolplatform.domain.Tool;
 import com.acme.toolplatform.domain.ToolVersion;
 import com.acme.toolplatform.domain.VersionSelector;
 import com.acme.toolplatform.domain.VersionStatus;
+import com.acme.toolplatform.observability.PlatformMetrics;
 import com.acme.toolplatform.repository.ClientRepository;
 import com.acme.toolplatform.repository.ClientToolConfigurationRepository;
 import com.acme.toolplatform.service.exception.ResourceNotFoundException;
 import com.acme.toolplatform.service.exception.VersionRevokedException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -43,7 +45,8 @@ class ClientConfigurationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ClientConfigurationService(clientRepository, configRepository, registry);
+        service = new ClientConfigurationService(clientRepository, configRepository, registry,
+                new PlatformMetrics(new SimpleMeterRegistry()));
         client = new Client(CLIENT, "Audit-frozen consumer");
         tool = new Tool(TOOL, null);
     }

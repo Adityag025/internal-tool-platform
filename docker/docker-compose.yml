@@ -77,6 +77,10 @@ services:
       ARTIFACT_ROOT: /var/lib/tool-platform/artifacts
       CORS_ALLOWED_ORIGINS: http://localhost:${FRONTEND_HOST_PORT:-3000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      # Empty by default: writes are open locally and the service says so
+      # loudly at start-up. Set API_KEY in .env to require it.
+      API_KEY: ${API_KEY:-}
     ports:
       - "${APP_HOST_PORT:-8081}:8081"
     volumes:

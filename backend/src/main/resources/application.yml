@@ -32,6 +32,13 @@ spring:
 
 # ---------------------------------------------------------------- platform
 platform:
+  security:
+    # Empty = writes are UNAUTHENTICATED, and the service logs a loud warning
+    # at start-up saying so. Set API_KEY to require X-API-Key on every
+    # POST/PUT/DELETE. A silent insecure default is how you end up in
+    # production without noticing; a loud one is a decision.
+    api-key: ${API_KEY:}
+
   # Origins allowed to call this API from a browser. Empty = CORS off, which
   # is the right default for a service with no browser client. Never "*".
   cors:
@@ -64,7 +71,16 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        # prometheus is the scrape endpoint. Note it is NOT public when
+        # authentication is enabled - metrics name internal endpoints and
+        # reveal traffic patterns, so they sit behind the API key.
+        include: health,info,metrics,prometheus
+  metrics:
+    tags:
+      # Every metric carries these, so one dashboard can separate environments
+      # and one alert can name the service that fired it.
+      application: tool-registry
+      environment: ${ENVIRONMENT:local}
   endpoint:
     health:
       show-details: always

@@ -63,7 +63,9 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
-    private static final String BASE = "https://platform.acme.internal/errors/";
+    /** Shared so every component emits the same stable error identifiers. */
+    public static final String ERROR_BASE = "https://platform.acme.internal/errors/";
+    private static final String BASE = ERROR_BASE;
 
     // ------------------------------------------------------- domain failures
 

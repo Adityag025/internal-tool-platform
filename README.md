@@ -25,7 +25,7 @@ and deploy internal tools.
 
 ## Status
 
-Phases 1-8 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
+**All 9 phases complete** — see [`docs/roadmap.md`](docs/roadmap.md).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
@@ -37,7 +37,35 @@ Phases 1-8 of 9 complete — see [`docs/roadmap.md`](docs/roadmap.md).
 | 6 | Optimised CI pipeline + before/after numbers | **done** |
 | 7 | Docker image, full Compose stack, TypeScript client | **done** |
 | 8 | AWS (ECR + ECS) — written, not provisioned | **done** |
-| 9 | Observability, security, interview pack | pending |
+| 9 | Observability, security, interview pack | **done** |
+
+## Security
+
+Reads are public; **writes require `X-API-Key`**. With no key configured the
+service runs open and says so loudly on every start-up — a silent insecure
+default is how you end up in production without noticing.
+
+```bash
+API_KEY=$(openssl rand -hex 16) docker compose -f docker/docker-compose.yml up -d --wait
+API_KEY=$API_KEY ./scripts/run-integration-tests.sh     # 76 passed
+```
+
+Without the key the two auth tests skip with a reason; with it, all 76 pass.
+
+## Observability
+
+`/actuator/health` (plus `/liveness` and `/readiness`), and
+`/actuator/prometheus` — behind the API key, because metric names enumerate
+internal endpoints.
+
+```
+toolplatform_version_published_total{tool="..."} 18.0
+toolplatform_artifact_download_seconds{outcome="success",quantile="0.99"} 3.5e-4
+toolplatform_artifact_checksum_mismatch_total{tool="..."}   # alert at > 0
+```
+
+Tagged by tool and outcome, **never by version or client** — that is how you
+avoid a cardinality explosion.
 
 ## Tech stack
 
@@ -122,18 +150,19 @@ Three tiers, each catching what the others structurally cannot.
 # Java: unit/slice (fast) and Testcontainers (slow)
 cd backend
 ./mvnw test      # 72 tests, no Docker, ~5 s
-./mvnw verify    # + 25 Testcontainers tests on real PostgreSQL, ~19 s
+./mvnw verify    # + 33 Testcontainers tests on real PostgreSQL, ~22 s
 
 # Python: black-box, data-driven, against a running platform
-./scripts/run-integration-tests.sh            # 75 tests, ~2 s
+./scripts/run-integration-tests.sh            # 76 tests, ~3 s
 ./scripts/run-integration-tests.sh -m smoke   # ~1 s
 ```
 
 | Tier | Count | Needs | Answers |
 |------|-------|-------|---------|
 | Unit / slice | 72 | nothing | is the logic right? |
-| Component integration | 25 | Docker | do the pieces fit? |
-| Black-box API (pytest) | 75 | running platform | does it behave correctly from outside? |
+| Component integration | 33 | Docker | do the pieces fit? |
+| Black-box API (pytest) | 76 | running platform | does it behave correctly from outside? |
+| **Total** | **181** | | |
 
 The fast/slow split (`@Tag("integration")` + surefire/failsafe) is the
 mechanism behind the pipeline optimisation in Phase 6.
@@ -258,6 +287,10 @@ internal-tool-platform/
 
 - [`docs/architecture.md`](docs/architecture.md) — components, both flows, data model, container networking, secret management
 - [`docs/roadmap.md`](docs/roadmap.md) — the nine phases and why they are in that order
+- [`docs/resume-mapping.md`](docs/resume-mapping.md) — **read this before any interview**: how each responsibility maps to something demonstrable, and where the mapping stops
+- [`docs/interview-questions.md`](docs/interview-questions.md) — ~90 questions across 19 topics, grounded in this code
+- [`docs/observability.md`](docs/observability.md) — logs, metrics, health, and why tag cardinality is the thing to get right
+- [`docs/security.md`](docs/security.md) — threat model, API-key auth, secret management across three environments
 - [`docs/aws-deployment.md`](docs/aws-deployment.md) — EC2 vs Fargate, immutable task revisions, OIDC instead of stored keys, RDS, **real costs and teardown**
 - [`docs/ci-cd.md`](docs/ci-cd.md) — every pipeline stage explained, secret scoping, the measured baseline, and the same pipeline in Jenkins
 - [`docs/testing.md`](docs/testing.md) — the three test tiers, why data-driven beats duplicated methods, fixtures and run isolation

@@ -19,7 +19,9 @@ import com.acme.toolplatform.service.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.acme.toolplatform.security.SecurityConfig;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -29,6 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * It verifies the HTTP contract - status codes, headers, JSON shape,
  * problem+json errors - without a database. Still the fast lane.
  */
+@Import(SecurityConfig.class)
 @WebMvcTest({ToolController.class, ToolVersionController.class})
 class ToolControllerTest {
 

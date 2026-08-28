@@ -23,13 +23,20 @@ def sha256_hex(data: bytes) -> str:
 
 class ToolPlatformClient:
 
-    def __init__(self, base_url: str, timeout: float = 15.0):
+    def __init__(self, base_url: str, timeout: float = 15.0, api_key: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.api_key = api_key
         self.session = requests.Session()
         # Tag every request so a failure can be traced straight into the
         # service's access log: grep the requestId, see method/status/latency.
         self.session.headers.update({"X-Client-Id": "pytest-integration-suite"})
+        if api_key:
+            # Sent on every request. The server ignores it on public reads and
+            # requires it on writes, so the client does not have to know which
+            # is which - that decision belongs to the server's authorization
+            # rules, not to forty call sites here.
+            self.session.headers["X-API-Key"] = api_key
 
     # ------------------------------------------------------------- transport
 
